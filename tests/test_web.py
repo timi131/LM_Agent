@@ -11,8 +11,17 @@ class FakeClient:
     def __init__(self, responses=()):
         self.responses = list(responses)
 
-    def chat(self, **kwargs):
-        return self.responses.pop(0)
+    def chat(self, stream=False, **kwargs):
+        response = self.responses.pop(0)
+        if not stream:
+            return response
+        # как Ollama: текст приходит кусочками, вызовы инструментов — целиком
+        msg = response["message"]
+        chunks = [{"message": {"role": "assistant", "content": w}} for w in msg.get("content", "").split(" ") if w]
+        chunks = [{"message": {"role": "assistant", "content": c["message"]["content"] + " "}} for c in chunks]
+        if msg.get("tool_calls"):
+            chunks.append({"message": {"role": "assistant", "content": "", "tool_calls": msg["tool_calls"]}})
+        return iter(chunks or [{"message": {"role": "assistant", "content": ""}}])
 
     def embed(self, model, input):
         return {"embeddings": [[len(t) % 7 + 1.0, 1.0] for t in input]}
@@ -65,7 +74,8 @@ def test_ws_chat_with_approval(make):
         events = receive_until(ws, "answer")
         tool = next(e for e in events if e["type"] == "tool")
         assert "stdout:\nhi" in tool["result"]
-        assert events[-1]["text"] == "Готово"
+        assert events[-1]["text"].strip() == "Готово"
+        assert any(e["type"] == "delta" for e in events)  # ответ шёл потоком
 
     # история сессии восстанавливается при переподключении
     with client.websocket_connect("/ws?session=s1") as ws:
@@ -88,7 +98,8 @@ def test_ws_denied(make):
 def test_http_chat_denies_dangerous_by_default(make):
     client = make([tool_call("run_command", command="echo hi"), answer("Не смог")])
     data = client.post("/api/chat", json={"message": "запусти", "session": "api"}).json()
-    assert data["answer"] == "Не смог"
+    assert data["answer"].strip() == "Не смог"
+    assert all(e["type"] == "tool" for e in data["tools"])  # кусочки текста в HTTP-ответ не попадают
     assert data["tools"][0]["result"].startswith("Отклонено")
 
 

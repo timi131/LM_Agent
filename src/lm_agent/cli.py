@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 
 import ollama
 
@@ -19,6 +20,16 @@ HELP = "Команды: /reset — очистить историю, /tools — �
 def _short(value, limit: int = 200) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _quiet(fn):
+    def run():
+        try:
+            fn()
+        except Exception:  # noqa: BLE001 — прогрев необязателен
+            pass
+
+    return run
 
 
 def make_approver(auto: bool):
@@ -43,12 +54,22 @@ def build_agent(settings: Settings, verbose: bool = True, toolkits: tuple[str, .
     client = ollama.Client(host=settings.host)
     registry, memory = build_registry(settings, client, make_approver(settings.auto_approve), toolkits)
 
+    state = {"mid_line": False}  # напечатан ли кусок ответа без перевода строки
+
+    def token(text: str) -> None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        state["mid_line"] = not text.endswith("\n")
+
     def show(event: ToolEvent) -> None:
+        if state["mid_line"]:
+            print()
+            state["mid_line"] = False
         if verbose:
             print(f"  🔧 {event.name}({_short(event.arguments, 120)}) → {_short(event.result)}", file=sys.stderr)
 
     return Agent(
-        client=client, tools=registry, settings=settings, on_tool=show,
+        client=client, tools=registry, settings=settings, on_tool=show, on_token=token,
         context=memory.as_prompt if memory else None,
     )
 
@@ -78,9 +99,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.prompt:
-            print(agent.ask(" ".join(args.prompt)))
+            agent.ask(" ".join(args.prompt))  # ответ печатается по мере генерации
+            print()
             return 0
 
+        threading.Thread(target=_quiet(agent.warmup), daemon=True).start()  # пока пользователь печатает
         print(f"LM Agent · модель {settings.model} · {settings.host}\n{HELP}")
         if settings.auto_approve:
             print("⚠️  Подтверждения отключены: опасные действия выполняются без вопросов.")
@@ -104,7 +127,8 @@ def main(argv: list[str] | None = None) -> int:
             if prompt == "/memory":
                 print(agent.tools.call("list_memories", {}) if "list_memories" in agent.tools else "Память отключена")
                 continue
-            print(agent.ask(prompt))
+            agent.ask(prompt)
+            print()
     except ollama.ResponseError as e:
         print(f"Ошибка Ollama: {e.error}. Модель скачана? `ollama pull {settings.model}`", file=sys.stderr)
     except ConnectionError:

@@ -13,6 +13,7 @@ import contextvars
 import os
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -80,7 +81,8 @@ class Collector:
         self.events: list[dict] = []
 
     def send(self, payload: dict) -> None:
-        self.events.append(payload)
+        if payload.get("type") != "delta":  # кусочки текста в HTTP-ответ не нужны — там итог целиком
+            self.events.append(payload)
 
     def approve(self, name: str, arguments: dict) -> bool:
         return self.auto_approve
@@ -144,6 +146,11 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
         if channel:
             channel.send({"type": "tool", "name": event.name, "arguments": event.arguments, "result": event.result})
 
+    def on_token(text: str) -> None:
+        channel = _channel.get()
+        if channel:
+            channel.send({"type": "delta", "text": text})
+
     registry, memory = build_registry(settings, client, approver, toolkits)
     sessions: dict[str, Agent] = {}
     locks: dict[str, asyncio.Lock] = {}
@@ -151,13 +158,26 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
     def session(session_id: str) -> tuple[Agent, asyncio.Lock]:
         if session_id not in sessions:
             sessions[session_id] = Agent(
-                client=client, tools=registry, settings=settings, on_tool=on_tool,
+                client=client, tools=registry, settings=settings, on_tool=on_tool, on_token=on_token,
                 context=memory.as_prompt if memory else None,
             )
             locks[session_id] = asyncio.Lock()
         return sessions[session_id], locks[session_id]
 
-    app = FastAPI(title="LM Agent", docs_url="/api/docs-ui", redoc_url=None)
+    def warmup() -> None:
+        try:
+            session("_warmup")[0].warmup()
+        except Exception:  # noqa: BLE001 — Ollama может быть ещё не запущен; это не ошибка сервера
+            pass
+        sessions.pop("_warmup", None)
+        locks.pop("_warmup", None)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        threading.Thread(target=warmup, daemon=True, name="lm-agent-warmup").start()
+        yield
+
+    app = FastAPI(title="LM Agent", docs_url="/api/docs-ui", redoc_url=None, lifespan=lifespan)
 
     @app.middleware("http")
     async def guard(request: Request, call_next):

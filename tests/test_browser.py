@@ -64,7 +64,7 @@ def test_open_and_snapshot(setup, page_url):
     if snap.startswith("Ошибка") and "Браузер не найден" in snap:
         pytest.skip("Нет ни Chromium, ни Chrome")
     assert "Тестовая форма" in snap
-    assert '"О нас" → #about' in snap
+    assert 'link "О нас"' in snap and "#about" not in snap  # у ссылки с текстом адрес не нужен
     assert "(пароль — вводит пользователь)" in snap
     assert "варианты: Маленькая | Большая" in snap
     assert '"Оформить заказ" (отправляет форму)' in snap
@@ -97,6 +97,21 @@ def test_submit_requires_confirmation(setup, page_url):
     reg.approver = lambda n, a: True
     done = reg.call("browser_click", {"ref": ref_of(out, "Оформить заказ")})
     assert "Заказ: побольше сыра" in done
+
+
+def test_read_page_in_parts(setup, tmp_path):
+    reg, _, _ = setup()
+    long_page = tmp_path / "long.html"
+    long_page.write_text("<html><body>" + "".join(f"<p>Абзац {i} " + "текст " * 40 + "</p>" for i in range(60)) + "</body></html>")
+    snap = reg.call("browser_open", {"url": long_page.as_uri()})
+    if "Браузер не найден" in snap:
+        pytest.skip("Нет ни Chromium, ни Chrome")
+    assert "Абзац 59" not in snap  # в снимке только видимая часть
+    first = reg.call("browser_read_page", {})
+    assert first.startswith("Часть 1 из ") and "browser_read_page(part=2)" in first
+    total = int(first.split()[3])
+    last = reg.call("browser_read_page", {"part": total})
+    assert "Абзац 59" in last and "дальше" not in last
 
 
 def test_password_refused_and_select(setup, page_url):

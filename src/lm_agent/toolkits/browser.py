@@ -21,8 +21,11 @@ from typing import Any, Callable
 
 from ..tools import ToolRegistry
 
-MAX_ELEMENTS = 150
-MAX_TEXT = 4000
+# Снимок — только то, что на экране и рядом: каждый токен снимка модель читает ~6 мс.
+MAX_ELEMENTS = 60
+MAX_TEXT = 2500
+NEAR_PX = 300  # насколько за краем экрана ещё учитывать элементы
+READ_CHUNK = 5000
 CALL_TIMEOUT = 120
 
 # Клики и нажатия, после которых что-то меняется необратимо, — спрашиваем пользователя.
@@ -37,14 +40,18 @@ SNAPSHOT_JS = r"""
   const SEL = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=link],'
     + ' [role=tab], [role=menuitem], [role=checkbox], [role=radio], [role=option], [role=switch], [role=combobox],'
     + ' [contenteditable=""], [contenteditable=true], [onclick]';
+  const MAX = %d, MAX_TEXT = %d, NEAR = %d;
   document.querySelectorAll('[data-lm-ref]').forEach(e => e.removeAttribute('data-lm-ref'));
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+  const near = r => r.bottom > -NEAR && r.top < innerHeight + NEAR;
   const out = [];
+  let above = 0, below = 0;
   for (const el of document.querySelectorAll(SEL)) {
-    if (out.length >= %d) break;
     const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1 || el.disabled) continue;
     const st = getComputedStyle(el);
-    if (r.width < 1 || r.height < 1 || st.visibility === 'hidden' || st.display === 'none' || el.disabled) continue;
+    if (st.visibility === 'hidden' || st.display === 'none') continue;
+    if (!near(r) || out.length >= MAX) { if (r.top < 0) above++; else below++; continue; }
     const ref = out.length + 1;
     el.setAttribute('data-lm-ref', String(ref));
     const tag = el.tagName.toLowerCase();
@@ -55,7 +62,7 @@ SNAPSHOT_JS = r"""
       || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('name') || '';
     if (!clean(name)) { const img = el.querySelector('img[alt]'); if (img) name = img.alt; }
     if (!clean(name) && tag === 'input' && ['submit', 'button'].includes(type)) name = el.value;
-    const item = { ref, role, name: clean(name).slice(0, 80) };
+    const item = { ref, role, name: clean(name).slice(0, 60) };
     if (tag === 'input' || tag === 'textarea') {
       if (type === 'password') item.password = true;
       else if (['checkbox', 'radio'].includes(type)) item.checked = el.checked;
@@ -65,18 +72,37 @@ SNAPSHOT_JS = r"""
       item.value = clean(el.options[el.selectedIndex] && el.options[el.selectedIndex].text);
       item.options = [...el.options].slice(0, 15).map(o => clean(o.text));
     }
-    if (tag === 'a') item.href = (el.getAttribute('href') || '').slice(0, 100);
+    if (tag === 'a') {
+      const href = el.getAttribute('href') || '';
+      // у ссылки с понятным текстом адрес модели почти не нужен — экономим токены
+      if (!item.name || href.startsWith('http')) item.href = href.slice(0, 60);
+    }
     if ((tag === 'button' || (tag === 'input' && ['submit', 'image'].includes(type))) && el.form && el.type === 'submit') item.submit = true;
     out.push(item);
   }
+  // текст только видимой части страницы
+  const parts = [];
+  let total = 0;
+  const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode() && total < MAX_TEXT) {
+    const node = walker.currentNode, p = node.parentElement;
+    const t = clean(node.textContent);
+    if (!t || !p || ['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(p.tagName)) continue;
+    const r = p.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > innerHeight) continue;
+    parts.push(t);
+    total += t.length + 1;
+  }
   const doc = document.documentElement;
   return {
-    title: document.title, url: location.href, elements: out,
-    text: clean((document.body && document.body.innerText || '').replace(/\n{2,}/g, ' ¶ ')).replace(/ ¶ /g, '\n').slice(0, %d),
+    title: document.title, url: location.href, elements: out, above, below,
+    text: parts.join(' ').slice(0, MAX_TEXT),
     scrollY: Math.round(scrollY), scrollMax: Math.max(0, doc.scrollHeight - innerHeight),
   };
 }
-""" % (MAX_ELEMENTS, MAX_TEXT)
+""" % (MAX_ELEMENTS, MAX_TEXT, NEAR_PX)
+
+READ_JS = "() => (document.body && document.body.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim()"
 
 
 class _Worker(threading.Thread):
@@ -213,12 +239,15 @@ class Browser:
             f"URL: {data['url']}",
             f"Прокрутка: {data['scrollY']} из {data['scrollMax']} px",
             "",
-            "Элементы (используй номер в browser_click / browser_type / browser_select):",
+            "Элементы на экране (используй номер в browser_click / browser_type / browser_select):",
             *(describe(e) for e in data["elements"]),
         ]
-        if len(data["elements"]) >= MAX_ELEMENTS:
-            lines.append(f"…показаны первые {MAX_ELEMENTS} элементов; прокрути страницу, чтобы увидеть остальные")
-        lines += ["", "Текст страницы:", data["text"] or "(пусто)"]
+        if data["above"] or data["below"]:
+            lines.append(f"…ещё элементов: выше {data['above']}, ниже {data['below']} — прокрути (browser_scroll), чтобы увидеть")
+        lines += [
+            "", "Видимый текст (всю страницу целиком читай через browser_read_page):",
+            data["text"] or "(пусто)",
+        ]
         return "\n".join(lines)
 
     # --- действия (вызываются из любого потока) ---
@@ -347,6 +376,23 @@ def register(registry: ToolRegistry, browser: Browser, confirm_mode: str = "risk
         key: название клавиши
         """
         return browser.run(lambda page: page.keyboard.press(key))
+
+    @registry.register
+    def browser_read_page(part: int = 1) -> str:
+        """Возвращает весь текст текущей страницы частями — чтобы прочитать статью или длинный список.
+
+        part: номер части, начиная с 1
+        """
+
+        def job():
+            text = browser._ensure().evaluate(READ_JS)
+            total = max(1, -(-len(text) // READ_CHUNK))
+            n = max(1, min(int(part), total))
+            chunk = text[(n - 1) * READ_CHUNK : n * READ_CHUNK]
+            more = f"\n…дальше: browser_read_page(part={n + 1})" if n < total else ""
+            return f"Часть {n} из {total} — {browser.url}\n{chunk}{more}"
+
+        return browser.call(job)
 
     @registry.register
     def browser_scroll(direction: str = "down") -> str:

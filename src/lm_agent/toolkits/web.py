@@ -9,7 +9,8 @@ import httpx
 
 from ..tools import ToolRegistry
 
-_MAX_PAGE = 15_000
+# Страница отдаётся частями: модель читает ~165 токенов/с, длинный кусок — это десятки секунд.
+_CHUNK = 6_000
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) LM-Agent/0.1"
 
 
@@ -59,18 +60,28 @@ def register(registry: ToolRegistry) -> None:
             return "Ничего не найдено"
         return "\n\n".join(f"{r.get('title')}\n{r.get('href')}\n{r.get('body')}" for r in results)
 
+    last: dict[str, str] = {}  # последняя скачанная страница — чтобы читать её частями без повторной загрузки
+
     @registry.register
-    def fetch_url(url: str) -> str:
-        """Скачивает страницу по ссылке и возвращает её текст (HTML очищается от разметки).
+    def fetch_url(url: str, part: int = 1) -> str:
+        """Скачивает страницу по ссылке и возвращает её текст частями (HTML очищается от разметки).
 
         url: адрес страницы, http:// или https://
+        part: номер части, начиная с 1 (если страница длинная)
         """
         if not url.startswith(("http://", "https://")):
             return "Ошибка: нужен адрес http:// или https://"
-        resp = httpx.get(url, headers={"User-Agent": _UA}, timeout=20, follow_redirects=True)
-        resp.raise_for_status()
-        ctype = resp.headers.get("content-type", "")
-        text = html_to_text(resp.text) if "html" in ctype else resp.text
-        if len(text) > _MAX_PAGE:
-            text = text[:_MAX_PAGE] + "\n…(обрезано)"
-        return f"[{resp.status_code} {resp.url}]\n{text}"
+        if url not in last:
+            resp = httpx.get(url, headers={"User-Agent": _UA}, timeout=20, follow_redirects=True)
+            resp.raise_for_status()
+            ctype = resp.headers.get("content-type", "")
+            last.clear()
+            last[url] = f"[{resp.status_code} {resp.url}]\n" + (html_to_text(resp.text) if "html" in ctype else resp.text)
+        text = last[url]
+        total = max(1, -(-len(text) // _CHUNK))
+        n = max(1, min(int(part), total))
+        chunk = text[(n - 1) * _CHUNK : n * _CHUNK]
+        if total == 1:
+            return chunk
+        more = f"\n…дальше: fetch_url(url, part={n + 1})" if n < total else ""
+        return f"Часть {n} из {total}\n{chunk}{more}"

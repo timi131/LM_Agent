@@ -179,6 +179,39 @@ function setVerdict(card, kind, text) {
   buttons.replaceWith(verdict);
 }
 
+let streaming = null; // ответ, который сейчас набирается: { bubble, text }
+let sentAt = 0;
+
+function streamDelta(text) {
+  if (!streaming) {
+    addMessage("assistant", "");
+    streaming = { bubble: els.messages.lastElementChild.querySelector(".bubble"), text: "" };
+  }
+  streaming.text += text;
+  streaming.bubble.innerHTML = markdown(streaming.text);
+  els.thinking.hidden = true;
+  scrollDown();
+}
+
+function finishAnswer(text) {
+  let bubble;
+  if (streaming) {
+    bubble = streaming.bubble;
+    if (text) bubble.innerHTML = markdown(text);
+    streaming = null;
+  } else if (text) {
+    addMessage("assistant", text);
+    bubble = els.messages.lastElementChild.querySelector(".bubble");
+  }
+  if (bubble && sentAt) {
+    const meta = document.createElement("div");
+    meta.className = "elapsed";
+    meta.textContent = `⏱ ${((performance.now() - sentAt) / 1000).toFixed(1)} с`;
+    bubble.after(meta);
+    sentAt = 0;
+  }
+}
+
 let busy = false;
 function setBusy(value) {
   busy = value;
@@ -220,6 +253,7 @@ function connect() {
 function handle(ev) {
   switch (ev.type) {
     case "history":
+      streaming = null;
       els.messages.replaceChildren();
       for (const m of ev.messages) {
         if (m.role === "tool") addTool(m.name, m.arguments, m.content);
@@ -231,8 +265,14 @@ function handle(ev) {
     case "busy":
       setBusy(ev.value);
       break;
+    case "delta":
+      streamDelta(ev.text);
+      break;
     case "tool":
+      if (streaming && !streaming.text.trim()) streaming.bubble.parentElement.remove();
+      streaming = null;
       addTool(ev.name, ev.arguments, ev.result);
+      if (busy) els.thinking.hidden = false;
       break;
     case "approval":
       addApproval(ev);
@@ -243,9 +283,10 @@ function handle(ev) {
       break;
     }
     case "answer":
-      addMessage("assistant", ev.text);
+      finishAnswer(ev.text);
       break;
     case "error":
+      streaming = null;
       addMessage("error", ev.text);
       break;
   }
@@ -261,6 +302,7 @@ function submit(text) {
   text = text.trim();
   if (!text || busy) return;
   addMessage("user", text);
+  sentAt = performance.now();
   send({ type: "message", text });
   setBusy(true);
   els.input.value = "";

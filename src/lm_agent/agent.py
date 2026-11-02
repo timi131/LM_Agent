@@ -39,6 +39,8 @@ class Agent:
     tools: ToolRegistry
     settings: Settings
     on_tool: Callable[[ToolEvent], None] | None = None
+    # Потоковый вывод: вызывается с каждым кусочком текста по мере генерации.
+    on_token: Callable[[str], None] | None = None
     # Дополнительный контекст для системного промпта (например, долговременная память).
     context: Callable[[], str] | None = None
     messages: list[dict] = field(default_factory=list)
@@ -59,15 +61,8 @@ class Agent:
 
         for _ in range(self.settings.max_steps):
             self._compact_snapshots()
-            response = _as_dict(
-                self.client.chat(
-                    model=self.settings.model,
-                    messages=self.messages,
-                    tools=self.tools.schemas(),
-                    options=options,
-                )
-            )
-            message = response.get("message", {})
+            request = dict(model=self.settings.model, messages=self.messages, tools=self.tools.schemas(), options=options)
+            message = self._stream(request) if self.on_token else _as_dict(self.client.chat(**request)).get("message", {})
             content = message.get("content") or ""
             tool_calls = message.get("tool_calls") or []
 
@@ -84,6 +79,26 @@ class Agent:
                 self.messages.append({"role": "tool", "content": result, "tool_name": name})
 
         return f"Остановлено: превышен лимит шагов ({self.settings.max_steps}) без итогового ответа."
+
+    def warmup(self) -> None:
+        """Заранее прогоняет системный промпт и описания инструментов через модель, чтобы Ollama
+        закэшировала этот общий префикс: иначе первый ответ ждёт его чтения (~15–20 с на 7B)."""
+        self.client.chat(
+            model=self.settings.model,
+            messages=[self.messages[0], {"role": "user", "content": "."}],
+            tools=self.tools.schemas(),
+            options={"temperature": self.settings.temperature, "num_ctx": self.settings.num_ctx, "num_predict": 1},
+        )
+
+    def _stream(self, request: dict) -> dict:
+        content, tool_calls = [], []
+        for chunk in self.client.chat(**request, stream=True):
+            msg = _as_dict(chunk).get("message", {})
+            if msg.get("content"):
+                content.append(msg["content"])
+                self.on_token(msg["content"])
+            tool_calls.extend(msg.get("tool_calls") or [])
+        return {"content": "".join(content), "tool_calls": tool_calls}
 
     def _compact_snapshots(self) -> None:
         snapshots = [
