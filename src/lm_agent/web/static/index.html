@@ -3,15 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LM Agent</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f6bed'/><circle cx='11' cy='14' r='3' fill='white'/><circle cx='21' cy='14' r='3' fill='white'/><rect x='10' y='21' width='12' height='2.5' rx='1.25' fill='white'/></svg>">
+  <title>REDSMS Агент</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo" aria-hidden="true"></span>
-      <span class="brand-name">LM Agent</span>
+      <img class="logo-redsms" src="/static/redsms-logo.svg" alt="REDSMS" width="106" height="24">
+      <span class="brand-name">Агент</span>
       <span class="badge" id="model" title="Модель Ollama">…</span>
       <span class="status" id="status" title="Соединение с сервером"></span>
     </div>
@@ -27,7 +30,7 @@
   <div class="chat-col">
   <main class="chat" id="chat" aria-live="polite">
     <div class="empty" id="empty">
-      <h1>Чем помочь?</h1>
+      <h1>Чем помочь<br>сегодня?</h1>
       <p>Агент умеет искать в интернете, работать с файлами, запускать команды, искать по вашим документам и помнить важное между разговорами. Опасные действия он выполняет только после вашего разрешения.</p>
       <div class="suggestions">
         <button class="chip">Какие новости об Ollama за последний месяц?</button>

@@ -58,7 +58,7 @@ def receive_until(ws, kind):
 
 def test_index_and_info(make):
     client = make()
-    assert "LM Agent" in client.get("/").text
+    assert "REDSMS Агент" in client.get("/").text
     info = client.get("/api/info").json()
     assert "run_command" in info["tools"] and info["auto_approve"] is False
 

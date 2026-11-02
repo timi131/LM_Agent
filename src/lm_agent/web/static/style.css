@@ -1,42 +1,53 @@
+/* Оформление в стиле REDSMS: фирменный красный, Montserrat, почти квадратные углы. */
 :root {
-  --bg: #f7f7f8;
+  --bg: #f7f8fc;
   --surface: #ffffff;
-  --surface-2: #f0f1f4;
-  --border: #e3e5ea;
-  --text: #1c1e24;
-  --muted: #6b7080;
-  --accent: #4f6bed;
+  --surface-2: #f1f2f6;
+  --border: #e4e7ec;
+  --text: #1a1a1a;
+  --muted: #6b6b6b;
+  --brand: #c1232f;          /* фон шапки и первого экрана */
+  --brand-deep: #bb0f1d;     /* текст на белых кнопках */
+  --accent: #db3340;         /* ссылки, фокус, акценты */
   --accent-text: #ffffff;
-  --user-bg: #4f6bed;
+  --tint: #fce4e6;           /* розовая подложка */
+  --tint-2: #fcf3f5;
+  --user-bg: #c1232f;
   --user-text: #ffffff;
-  --warn-bg: #fff6e5;
-  --warn-border: #f2c46d;
+  --warn-bg: #fcf3f5;
+  --warn-border: #f3b7bd;
   --ok: #1f9d55;
-  --bad: #d64545;
-  --code-bg: #f2f3f6;
-  --shadow: 0 8px 30px rgba(20, 24, 40, .08);
-  --radius: 14px;
+  --bad: #bb0f1d;
+  --code-bg: #f4f5f8;
+  --shadow: 0 2px 4px -2px rgba(16, 24, 40, .04), 0 12px 24px -4px rgba(16, 24, 40, .08);
+  --btn-shadow: 2px 2px 2px rgba(139, 0, 11, .33), 9px 5px 12px rgba(79, 0, 0, .38);
+  --radius: 6px;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #121317;
-    --surface: #1b1d23;
-    --surface-2: #23262e;
-    --border: #2e323c;
-    --text: #e7e9ee;
-    --muted: #9298a8;
-    --accent: #7189ff;
-    --accent-text: #0e1020;
-    --user-bg: #3b52c4;
+    --bg: #121214;
+    --surface: #1c1c1f;
+    --surface-2: #26262a;
+    --border: #33343a;
+    --text: #ececef;
+    --muted: #9a9aa2;
+    --brand: #a51d28;
+    --brand-deep: #a51d28;
+    --accent: #ff5a66;
+    --accent-text: #ffffff;
+    --tint: #3a1d21;
+    --tint-2: #2a1a1c;
+    --user-bg: #a51d28;
     --user-text: #ffffff;
-    --warn-bg: #2d2516;
-    --warn-border: #8a6a2a;
+    --warn-bg: #2a1a1c;
+    --warn-border: #6e2a31;
     --ok: #4cc488;
-    --bad: #ff7373;
-    --code-bg: #15161b;
-    --shadow: 0 8px 30px rgba(0, 0, 0, .4);
+    --bad: #ff6b75;
+    --code-bg: #161618;
+    --shadow: 0 8px 24px rgba(0, 0, 0, .45);
+    --btn-shadow: 2px 2px 2px rgba(0, 0, 0, .35), 6px 4px 12px rgba(0, 0, 0, .35);
     color-scheme: dark;
   }
 }
@@ -47,7 +58,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  font: 14px/1.6 Montserrat, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   display: flex;
   flex-direction: column;
 }
@@ -259,4 +270,84 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   .bubble { max-width: 92%; }
   .chat { padding: 16px 12px 8px; }
   .composer { padding: 8px 12px 12px; }
+}
+
+
+/* ===== REDSMS: компоненты ===== */
+
+/* шапка — сплошной фирменный красный, как на redsms.ru */
+.topbar { background: var(--brand); border-bottom: none; color: #fff; padding: 12px 20px; }
+.logo-redsms { height: 22px; width: auto; display: block; filter: brightness(0) invert(1); flex: none; }
+.brand-name {
+  font-weight: 500; font-size: 14px; white-space: nowrap; color: rgba(255, 255, 255, .9);
+  padding-left: 10px; border-left: 1px solid rgba(255, 255, 255, .35); line-height: 22px;
+}
+@media (max-width: 860px) { .badge { display: none; } }
+.logo {
+  border-radius: 4px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='11' cy='14' r='3' fill='%23c1232f'/%3E%3Ccircle cx='21' cy='14' r='3' fill='%23c1232f'/%3E%3Crect x='10' y='21' width='12' height='2.5' rx='1.25' fill='%23c1232f'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+.badge { color: #fff; background: rgba(255, 255, 255, .16); border: none; border-radius: 4px; font-weight: 500; }
+.status { box-shadow: 0 0 0 2px rgba(255, 255, 255, .35); }
+.status.online { background: #6ee7a8; }
+.status.offline { background: #fff; }
+.actions button { color: #fff; border-radius: 4px; font-weight: 500; }
+.actions button.ghost:hover:not(:disabled), .actions button[aria-pressed="true"] { background: rgba(255, 255, 255, .16); }
+.topbar button:focus-visible { outline-color: #fff; }
+
+/* кнопки */
+button { border-radius: 4px; }
+button.primary { background: var(--brand); color: #fff; font-weight: 600; box-shadow: var(--btn-shadow); }
+button.primary:hover:not(:disabled) { filter: none; background: var(--brand-deep); }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline-color: var(--accent); }
+
+/* первый экран — как «герой» redsms.ru: красный блок, крупный заголовок, две кнопки */
+.empty {
+  background: var(--brand); color: #fff; text-align: left;
+  border-radius: 8px; padding: 44px 40px 40px; margin-top: 4vh;
+}
+.empty h1 { font-size: 40px; line-height: 1.15; font-weight: 600; margin: 0 0 16px; }
+.empty p { color: rgba(255, 255, 255, .88); margin: 0 0 28px; max-width: 520px; font-size: 14px; }
+.suggestions { justify-content: flex-start; gap: 12px; }
+.chip {
+  background: transparent; color: #fff; border: 1px solid #fff; border-radius: 4px;
+  padding: 12px 20px; font-size: 13px;
+}
+.chip:hover { background: rgba(255, 255, 255, .1); border-color: #fff; }
+.chip:first-child { background: #fff; color: var(--brand-deep); border-color: #fff; box-shadow: var(--btn-shadow); }
+.chip:first-child:hover { background: #fff5f6; }
+
+/* сообщения */
+.bubble { border-radius: 8px; }
+.msg.user .bubble { border-bottom-right-radius: 2px; }
+.msg.assistant .bubble { border-bottom-left-radius: 2px; box-shadow: var(--shadow); border-color: var(--border); }
+.bubble a { color: var(--accent); font-weight: 500; }
+.tool { border-radius: 4px; }
+.tool .name { color: var(--accent); }
+
+/* подтверждение — розовая подложка, кнопка «Разрешить» фирменная */
+.approval { border-radius: 6px; border-left: 4px solid var(--accent); }
+.approval button.allow { background: var(--brand); box-shadow: var(--btn-shadow); }
+.approval button.deny { border-color: var(--border); }
+
+/* ввод */
+.composer textarea { border-radius: 6px; }
+.composer textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--tint); }
+.composer button { border-radius: 6px; }
+
+/* боковая панель и браузер */
+.tabs button[aria-selected="true"] { background: var(--tint); color: var(--accent); }
+.dropzone { border-radius: 6px; }
+.dropzone.over, .dropzone:hover { border-color: var(--accent); color: var(--accent); background: var(--tint-2); }
+.row input, .br-form input { border-radius: 4px; }
+.br-badge { border-radius: 4px; background: var(--tint); }
+.browser-view img { border-radius: 4px; }
+
+@media (max-width: 600px) {
+  .topbar { padding: 8px 10px; gap: 6px; }
+  .brand { flex: none; gap: 8px; }
+  .logo-redsms { height: 16px; }
+  .actions button { padding: 6px 6px; font-size: 13px; }
+  .empty { padding: 28px 22px; }
+  .empty h1 { font-size: 28px; }
 }
