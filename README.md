@@ -8,6 +8,7 @@
 ollama pull qwen2.5:7b
 ollama pull embeddinggemma     # для поиска по документам
 uv sync
+uv run playwright install chromium   # для браузера; не нужно, если есть Google Chrome
 cp .env.example .env           # и заполните нужное
 uv run lm-agent-web            # веб-чат: http://127.0.0.1:8000
 uv run lm-agent                # чат в терминале
@@ -46,6 +47,7 @@ curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
 | `basic` | `get_current_time`, `calculate` | — |
 | `files` | `list_files`, `find_files`, `read_file`, `write_file` | запись вне `workspace/` |
 | `web` | `web_search` (DuckDuckGo, без ключа), `fetch_url` | — |
+| `browser` | `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_select`, `browser_press`, `browser_scroll`, `browser_back`, `browser_tabs`, `browser_screenshot` | отправка форм и «опасные» кнопки |
 | `shell` | `run_command` | **каждый запуск** |
 | `services` | `list_services`, `call_service`, `http_request` | POST/PUT/PATCH/DELETE |
 | `mail` | `read_emails` (IMAP), `send_email` (SMTP) | каждое письмо |
@@ -55,6 +57,25 @@ curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
 ### Подтверждения
 
 Перед опасным действием агент показывает, что именно собирается сделать, и спрашивает `Разрешить? [y/N]`. Если терминал не интерактивный (скрипт, cron), такие действия отклоняются. Флаг `-y` или `LM_AGENT_AUTO_APPROVE=1` отключает вопросы. Включайте это, только если доверяете модели и всем источникам, которые она читает: текст веб-страницы или письма может подтолкнуть модель выполнить чужую команду.
+
+### Браузер
+
+Агент управляет настоящим Chromium через Playwright: выполняет JavaScript, кликает, заполняет формы, переключает вкладки. Модель видит страницу текстом — списком элементов с номерами (`[12] button "Войти"`) и видимым текстом; действия ссылаются на номер.
+
+Если установлен Google Chrome, ничего скачивать не нужно: агент запустит его с отдельным профилем. Иначе установите Chromium (один раз):
+
+```bash
+uv run playwright install chromium
+```
+
+Выбор браузера — `LM_AGENT_BROWSER_CHANNEL`: `auto` (Chromium, если скачан, иначе Chrome), `chromium`, `chrome`, `msedge`.
+
+- **Окно видно** — можно наблюдать и вмешаться. Невидимый режим: `LM_AGENT_BROWSER_HEADLESS=1`.
+- **Отдельный профиль** в `~/.lm_agent/browser`, не ваш Chrome. В нужные сайты войдите сами в окне агента один раз — сессия сохранится. Агент **не вводит пароли**: в поля пароля он писать отказывается.
+- **Подтверждения** (`LM_AGENT_BROWSER_CONFIRM`): `risky` (по умолчанию) — перед кнопками, отправляющими форму, Enter для отправки и кнопками со словами вроде «Оплатить», «Удалить», «Отправить», «Подтвердить»; `all` — перед любым кликом и вводом; `none` — никогда. В запросе показывается, что это за элемент и на какой странице.
+- Старые снимки страниц в истории автоматически сокращаются, чтобы не переполнять контекст.
+- Скриншоты (`browser_screenshot`) сохраняются в `workspace/screenshots/` — они для вас, `qwen2.5:7b` картинки не видит.
+- Модель на 7B уверенно проходит сценарии в 3–5 шагов; на длинных сценариях полезна модель крупнее.
 
 ### Файлы
 
@@ -102,9 +123,12 @@ curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
 | `LM_AGENT_SERVICES` | `./services.json` | описание внешних сервисов |
 | `LM_AGENT_TOOLKITS` | все | включённые наборы инструментов |
 | `LM_AGENT_AUTO_APPROVE` | `0` | не спрашивать подтверждений |
-| `LM_AGENT_MAX_STEPS` | `8` | лимит шагов «модель → инструмент» на один запрос |
+| `LM_AGENT_MAX_STEPS` | `15` | лимит шагов «модель → инструмент» на один запрос |
 | `LM_AGENT_NUM_CTX` | `16384` | окно контекста модели в токенах |
 | `LM_AGENT_COMMAND_TIMEOUT` | `60` | таймаут команды shell, секунды |
+| `LM_AGENT_BROWSER_HEADLESS` | `0` | `1` — браузер без окна |
+| `LM_AGENT_BROWSER_CHANNEL` | `auto` | браузер: `auto`, `chromium`, `chrome`, `msedge` |
+| `LM_AGENT_BROWSER_CONFIRM` | `risky` | когда спрашивать в браузере: `risky`, `all`, `none` |
 | `LM_AGENT_TEMPERATURE` | `0.2` | температура генерации |
 | `LM_AGENT_SYSTEM_PROMPT` | см. `config.py` | системный промпт |
 | `LM_AGENT_WEB_HOST` / `LM_AGENT_WEB_PORT` | `127.0.0.1` / `8000` | адрес веб-чата |
@@ -155,7 +179,7 @@ src/lm_agent/
   cli.py              терминальный интерфейс
   web/server.py       веб-сервер: WebSocket-чат и HTTP API
   web/static/         страница чата (HTML/CSS/JS, без сборки)
-  toolkits/           basic, files, web, shell, services, mail, docs, memory
+  toolkits/           basic, files, web, browser, shell, services, mail, docs, memory
 tests/                тесты (без реальной модели и сети)
 ```
 

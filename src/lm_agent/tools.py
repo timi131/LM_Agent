@@ -22,6 +22,8 @@ class Tool:
     func: Callable[..., Any]
     parameters: dict
     confirm: Confirm = False
+    # Пояснение для пользователя в запросе подтверждения (например, что за элемент страницы).
+    explain: Callable[[dict], str] | None = None
 
     def needs_confirm(self, arguments: dict) -> bool:
         return self.confirm(arguments) if callable(self.confirm) else bool(self.confirm)
@@ -45,7 +47,10 @@ def _parse_docstring(doc: str) -> tuple[str, dict[str, str]]:
     return " ".join(summary), params
 
 
-def build_tool(func: Callable[..., Any], name: str | None = None, confirm: Confirm = False) -> Tool:
+def build_tool(
+    func: Callable[..., Any], name: str | None = None, confirm: Confirm = False,
+    explain: Callable[[dict], str] | None = None,
+) -> Tool:
     description, arg_docs = _parse_docstring(func.__doc__ or "")
     hints = get_type_hints(func)
     properties, required = {}, []
@@ -62,6 +67,7 @@ def build_tool(func: Callable[..., Any], name: str | None = None, confirm: Confi
         func=func,
         parameters={"type": "object", "properties": properties, "required": required},
         confirm=confirm,
+        explain=explain,
     )
 
 
@@ -71,11 +77,14 @@ class ToolRegistry:
         # Без approver опасные инструменты запрещены — безопасное поведение по умолчанию.
         self.approver = approver
 
-    def register(self, func: Callable[..., Any] | None = None, *, name: str | None = None, confirm: Confirm = False):
+    def register(
+        self, func: Callable[..., Any] | None = None, *, name: str | None = None,
+        confirm: Confirm = False, explain: Callable[[dict], str] | None = None,
+    ):
         """`@registry.register`, `@registry.register(confirm=True)` или `registry.register(func)`."""
 
         def wrap(f: Callable[..., Any]) -> Callable[..., Any]:
-            tool = build_tool(f, name, confirm)
+            tool = build_tool(f, name, confirm, explain)
             self._tools[tool.name] = tool
             return f
 
@@ -90,6 +99,15 @@ class ToolRegistry:
     def schemas(self) -> list[dict]:
         return [t.schema() for t in self._tools.values()]
 
+    @staticmethod
+    def _shown(tool: Tool, arguments: dict) -> dict:
+        if not tool.explain:
+            return arguments
+        try:
+            return {**arguments, "что это": tool.explain(arguments)}
+        except Exception:  # noqa: BLE001 — пояснение не должно мешать подтверждению
+            return arguments
+
     def call(self, name: str, arguments: dict | str | None) -> str:
         """Выполняет инструмент. Ошибки возвращаются модели текстом, чтобы она могла исправиться."""
         tool = self._tools.get(name)
@@ -101,7 +119,7 @@ class ToolRegistry:
             except json.JSONDecodeError as e:
                 return f"Ошибка: аргументы не являются JSON: {e}"
         arguments = arguments or {}
-        if tool.needs_confirm(arguments) and not (self.approver and self.approver(name, arguments)):
+        if tool.needs_confirm(arguments) and not (self.approver and self.approver(name, self._shown(tool, arguments))):
             return "Отклонено пользователем: действие не выполнено. Не повторяй его без нового запроса."
         try:
             result = tool.func(**arguments)

@@ -13,6 +13,12 @@ class ChatClient(Protocol):
     def chat(self, *, model: str, messages: list[dict], tools: list[dict], options: dict) -> Any: ...
 
 
+# Результаты этих инструментов — снимки состояния (страницы браузера). Актуален только последний,
+# старые занимают контекст, поэтому их сокращаем.
+SNAPSHOT_TOOLS = ("browser_",)
+STALE_NOTE = "\n…(устаревший снимок страницы сокращён; актуальный — ниже или через browser_snapshot)"
+
+
 @dataclass
 class ToolEvent:
     name: str
@@ -52,6 +58,7 @@ class Agent:
         options = {"temperature": self.settings.temperature, "num_ctx": self.settings.num_ctx, **self.settings.options}
 
         for _ in range(self.settings.max_steps):
+            self._compact_snapshots()
             response = _as_dict(
                 self.client.chat(
                     model=self.settings.model,
@@ -77,3 +84,12 @@ class Agent:
                 self.messages.append({"role": "tool", "content": result, "tool_name": name})
 
         return f"Остановлено: превышен лимит шагов ({self.settings.max_steps}) без итогового ответа."
+
+    def _compact_snapshots(self) -> None:
+        snapshots = [
+            m for m in self.messages
+            if m["role"] == "tool" and m.get("tool_name", "").startswith(SNAPSHOT_TOOLS)
+            and not m["content"].endswith(STALE_NOTE)
+        ]
+        for m in snapshots[:-1]:
+            m["content"] = "\n".join(m["content"].splitlines()[:2]) + STALE_NOTE

@@ -6,9 +6,9 @@ from typing import Any
 
 from ..config import Settings
 from ..tools import Approver, ToolRegistry
-from . import basic, docs, files, mail, memory, services, shell, web
+from . import basic, browser, docs, files, mail, memory, services, shell, web
 
-ALL = ("basic", "files", "web", "shell", "services", "mail", "docs", "memory")
+ALL = ("basic", "files", "web", "browser", "shell", "services", "mail", "docs", "memory")
 
 
 def build_registry(
@@ -24,6 +24,9 @@ def build_registry(
     fa = files.register(registry, settings.workspace, settings.file_roots) if "files" in enabled else None
     if "web" in enabled:
         web.register(registry)
+    if "browser" in enabled:
+        b = browser.Browser(settings.data_dir / "browser", settings.workspace / "screenshots", settings.browser_headless, settings.browser_channel)
+        browser.register(registry, b, settings.browser_confirm)
     if "shell" in enabled:
         shell.register(registry, fa or files.FileAccess(settings.workspace, settings.file_roots), settings.command_timeout)
     if "services" in enabled:
