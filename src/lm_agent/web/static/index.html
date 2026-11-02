@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LM Agent</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f6bed'/><circle cx='11' cy='14' r='3' fill='white'/><circle cx='21' cy='14' r='3' fill='white'/><rect x='10' y='21' width='12' height='2.5' rx='1.25' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="brand-name">LM Agent</span>
+      <span class="badge" id="model" title="Модель Ollama">…</span>
+      <span class="status" id="status" title="Соединение с сервером"></span>
+    </div>
+    <nav class="actions">
+      <button class="ghost" id="btn-new" title="Очистить диалог (память сохранится)">Новый чат</button>
+      <button class="ghost" id="btn-memory">Память</button>
+      <button class="ghost" id="btn-docs">Документы</button>
+    </nav>
+  </header>
+
+  <main class="chat" id="chat" aria-live="polite">
+    <div class="empty" id="empty">
+      <h1>Чем помочь?</h1>
+      <p>Агент умеет искать в интернете, работать с файлами, запускать команды, искать по вашим документам и помнить важное между разговорами. Опасные действия он выполняет только после вашего разрешения.</p>
+      <div class="suggestions">
+        <button class="chip">Какие новости об Ollama за последний месяц?</button>
+        <button class="chip">Что лежит в моей рабочей папке?</button>
+        <button class="chip">Найди в документах, как оформить отпуск</button>
+        <button class="chip">Что ты обо мне помнишь?</button>
+      </div>
+    </div>
+    <div id="messages"></div>
+    <div class="thinking" id="thinking" hidden><span></span><span></span><span></span> Агент думает…</div>
+  </main>
+
+  <form class="composer" id="composer">
+    <textarea id="input" rows="1" placeholder="Напишите сообщение…" title="Enter — отправить, Shift+Enter — новая строка" autocomplete="off"></textarea>
+    <button type="submit" id="send" class="primary" title="Отправить">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z" fill="currentColor"/></svg>
+    </button>
+  </form>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="memory">Память</button>
+        <button role="tab" data-tab="docs">Документы</button>
+      </div>
+      <button class="ghost icon" id="drawer-close" title="Закрыть">✕</button>
+    </div>
+
+    <section class="panel" data-panel="memory">
+      <p class="hint">Факты отсюда агент видит в каждом разговоре. Он добавляет их сам, когда вы о чём-то просите помнить, или их можно добавить вручную.</p>
+      <form class="row" id="memory-form">
+        <input id="memory-input" placeholder="Например: отвечай кратко">
+        <button class="primary small">Добавить</button>
+      </form>
+      <ul class="list" id="memory-list"></ul>
+    </section>
+
+    <section class="panel" data-panel="docs">
+      <p class="hint">По этим файлам агент ищет по смыслу. Подходят .md, .txt, .pdf, .docx, .html, .csv и код. Папка: <code id="docs-dir"></code></p>
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="doc-files" multiple hidden>
+        <span>Перетащите файлы сюда или <u>выберите</u></span>
+      </label>
+      <div class="row">
+        <button class="ghost small" id="reindex">Переиндексировать</button>
+        <span class="muted small" id="docs-status"></span>
+      </div>
+      <ul class="list" id="docs-list"></ul>
+    </section>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

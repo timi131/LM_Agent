@@ -6,14 +6,18 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "ddgs>=9.16.1",
+    "fastapi>=0.162.0",
     "ollama>=0.4",
     "pypdf>=6.21.4",
     "python-docx>=1.2.0",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
 lm-agent = "lm_agent.cli:main"
+lm-agent-web = "lm_agent.web.server:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

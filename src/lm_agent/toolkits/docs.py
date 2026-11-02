@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,7 @@ class DocIndex:
         self.docs_dir = docs_dir
         self.index_file = index_file
         self.files: dict[str, dict] = {}
+        self._lock = threading.Lock()  # веб-интерфейс может обновлять индекс из нескольких потоков
         if index_file.exists():
             data = json.loads(index_file.read_text(encoding="utf-8"))
             if data.get("model") == embed_model:
@@ -98,6 +100,10 @@ class DocIndex:
         ]
 
     def update(self) -> dict[str, int]:
+        with self._lock:
+            return self._update()
+
+    def _update(self) -> dict[str, int]:
         stats = {"added": 0, "updated": 0, "removed": 0, "errors": 0, "chunks": 0}
         seen = set()
         for path in self.candidates():

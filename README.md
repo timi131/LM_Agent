@@ -9,13 +9,35 @@ ollama pull qwen2.5:7b
 ollama pull embeddinggemma     # для поиска по документам
 uv sync
 cp .env.example .env           # и заполните нужное
-uv run lm-agent                # интерактивный чат
+uv run lm-agent-web            # веб-чат: http://127.0.0.1:8000
+uv run lm-agent                # чат в терминале
 uv run lm-agent "Сколько будет sqrt(2) * 10?"   # разовый запрос
 uv run lm-agent -t basic,web   # только выбранные наборы инструментов
 uv run lm-agent -m llama3.1:8b # другая модель
 ```
 
 Команды в чате: `/tools`, `/memory`, `/reset` (очищает диалог, но не память), `/exit`.
+
+## Веб-чат
+
+```bash
+uv run lm-agent-web                    # http://127.0.0.1:8000
+uv run lm-agent-web --port 8080 -t basic,web,docs
+```
+
+Чат в браузере показывает каждый вызов инструмента (раскрывается — видно результат). Опасные действия приходят карточкой с кнопками «Разрешить / Отклонить»; без ответа 5 минут — отклоняется. Справа — панели «Память» (просмотр, добавление, удаление фактов) и «Документы» (загрузка перетаскиванием, удаление, переиндексация). Диалог переживает перезагрузку страницы, но не перезапуск сервера; «Новый чат» очищает диалог, память остаётся.
+
+**HTTP API** для своих программ и ботов (интерактивная документация — `/api/docs-ui`):
+
+```bash
+curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
+  -d '{"message": "Сколько будет 2**10?", "session": "bot-1"}'
+# → {"answer": "...", "tools": [...]}
+```
+
+Через API подтверждать некому, поэтому опасные действия там отклоняются, если не включён `LM_AGENT_AUTO_APPROVE`. Остальные методы: `GET/POST /api/memory`, `DELETE /api/memory/{id}`, `GET/POST /api/docs`, `DELETE /api/docs/{имя}`, `POST /api/docs/reindex`, `POST /api/sessions/{id}/reset`, `GET /api/info`.
+
+**Безопасность.** По умолчанию сервер слушает только `127.0.0.1`. Запросы с чужих сайтов, открытых в том же браузере, отклоняются (проверка `Origin`). Если открываете сервер в сеть (`--host 0.0.0.0`), обязательно задайте `LM_AGENT_WEB_TOKEN`: у агента есть shell и доступ к файлам. Токен передаётся заголовком `X-Token`, а в браузере — один раз через `http://хост:порт/?token=…`.
 
 ## Что умеет
 
@@ -85,6 +107,8 @@ uv run lm-agent -m llama3.1:8b # другая модель
 | `LM_AGENT_COMMAND_TIMEOUT` | `60` | таймаут команды shell, секунды |
 | `LM_AGENT_TEMPERATURE` | `0.2` | температура генерации |
 | `LM_AGENT_SYSTEM_PROMPT` | см. `config.py` | системный промпт |
+| `LM_AGENT_WEB_HOST` / `LM_AGENT_WEB_PORT` | `127.0.0.1` / `8000` | адрес веб-чата |
+| `LM_AGENT_WEB_TOKEN` | — | токен доступа к веб-чату и API |
 
 ## Выбор модели и ограничения
 
@@ -129,6 +153,8 @@ src/lm_agent/
   tools.py            реестр инструментов, JSON-схемы, подтверждения
   config.py           настройки
   cli.py              терминальный интерфейс
+  web/server.py       веб-сервер: WebSocket-чат и HTTP API
+  web/static/         страница чата (HTML/CSS/JS, без сборки)
   toolkits/           basic, files, web, shell, services, mail, docs, memory
 tests/                тесты (без реальной модели и сети)
 ```
