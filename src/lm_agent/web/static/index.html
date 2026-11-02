@@ -16,12 +16,15 @@
       <span class="status" id="status" title="Соединение с сервером"></span>
     </div>
     <nav class="actions">
-      <button class="ghost" id="btn-new" title="Очистить диалог (память сохранится)">Новый чат</button>
+      <button class="ghost" id="btn-new" title="Очистить диалог (память сохранится)"><span class="long">Новый чат</span><span class="short">Новый</span></button>
+      <button class="ghost" id="btn-browser" title="Показать, что агент делает в браузере">Браузер</button>
       <button class="ghost" id="btn-memory">Память</button>
-      <button class="ghost" id="btn-docs">Документы</button>
+      <button class="ghost" id="btn-docs" title="Документы для поиска"><span class="long">Документы</span><span class="short">Файлы</span></button>
     </nav>
   </header>
 
+  <div class="workspace">
+  <div class="chat-col">
   <main class="chat" id="chat" aria-live="polite">
     <div class="empty" id="empty">
       <h1>Чем помочь?</h1>
@@ -43,6 +46,27 @@
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z" fill="currentColor"/></svg>
     </button>
   </form>
+  </div>
+
+  <section class="browser" id="browser" hidden aria-label="Браузер агента">
+    <div class="browser-bar">
+      <button class="ghost icon" id="br-back" title="Назад">←</button>
+      <form id="br-form" class="br-form">
+        <input id="br-url" placeholder="Адрес сайта" autocomplete="off" spellcheck="false">
+      </form>
+      <span class="br-badge" id="br-agent" hidden>агент действует</span>
+      <button class="ghost icon" id="br-close" title="Скрыть панель">✕</button>
+    </div>
+    <div class="browser-view" id="br-view" tabindex="0" title="Кликайте и печатайте прямо здесь">
+      <img id="br-img" alt="Экран браузера агента" draggable="false" hidden>
+      <div class="br-empty" id="br-empty">
+        <p>Браузер ещё не открыт.</p>
+        <p class="muted">Введите адрес выше или попросите агента сделать что-нибудь на сайте — здесь будет видно каждое его действие.</p>
+      </div>
+    </div>
+    <div class="br-hint">Можно кликать, печатать и прокручивать прямо здесь — например, чтобы самому войти на сайт.</div>
+  </section>
+  </div>
 
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-head">

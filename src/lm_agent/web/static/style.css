@@ -78,6 +78,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .status.offline { background: var(--bad); }
 .actions { display: flex; gap: 4px; flex-wrap: nowrap; justify-content: flex-end; }
 .actions button { white-space: nowrap; }
+.actions .short { display: none; }
 
 button { cursor: pointer; border-radius: 10px; border: 1px solid transparent; padding: 7px 12px; background: none; }
 button:disabled { opacity: .5; cursor: default; }
@@ -87,6 +88,48 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 button.small { padding: 5px 10px; font-size: 13px; }
 button.icon { padding: 4px 9px; }
 button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- раскладка: чат + панель браузера --- */
+.workspace { flex: 1; display: flex; min-height: 0; }
+.chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.browser {
+  flex: 0 0 min(52%, 820px); display: flex; flex-direction: column; min-width: 0;
+  background: var(--surface); border-left: 1px solid var(--border);
+}
+.browser[hidden] { display: none; }
+.browser-bar { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.br-form { flex: 1; min-width: 0; }
+.br-form input {
+  width: 100%; padding: 6px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg); font-size: 13px;
+}
+.br-badge {
+  font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--accent);
+  animation: pulse 1.6s infinite;
+}
+.br-badge[hidden] { display: none; }
+@keyframes pulse { 50% { opacity: .45; } }
+.browser-view {
+  flex: 1; min-height: 0; overflow: auto; background: var(--surface-2);
+  display: flex; align-items: flex-start; justify-content: center; padding: 10px; outline: none;
+}
+.browser-view:focus-visible img { outline: 2px solid var(--accent); outline-offset: 2px; }
+.browser-view img {
+  width: 100%; height: auto; display: block; border-radius: 8px; box-shadow: var(--shadow);
+  cursor: pointer; user-select: none; background: #fff;
+}
+.browser-view img[hidden] { display: none; }
+.browser.agent .browser-view img { outline: 2px solid var(--accent); outline-offset: 2px; }
+.br-empty { margin: auto; text-align: center; max-width: 340px; padding: 20px; }
+.br-empty[hidden] { display: none; }
+.br-empty p { margin: 0 0 8px; }
+.br-hint { font-size: 12px; color: var(--muted); padding: 6px 12px 10px; border-top: 1px solid var(--border); }
+
+@media (max-width: 900px) {
+  .browser { position: fixed; inset: 53px 0 0 0; z-index: 12; flex-basis: auto; border-left: none; }
+}
 
 /* --- чат --- */
 .chat { flex: 1; overflow-y: auto; padding: 24px 16px 8px; }
@@ -209,6 +252,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @media (max-width: 600px) {
   .topbar { padding: 8px 10px; }
   .brand-name, .badge { display: none; }
+  .actions .long { display: none; }
+  .actions .short { display: inline; }
   .actions { gap: 2px; }
   .actions button { padding: 6px 7px; font-size: 14px; }
   .bubble { max-width: 92%; }

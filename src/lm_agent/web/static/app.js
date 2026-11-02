@@ -448,6 +448,125 @@ $("#doc-files").addEventListener("change", (e) => { upload(e.target.files); e.ta
 dropzone.addEventListener("drop", (e) => { e.preventDefault(); upload(e.dataTransfer.files); });
 $("#reindex").addEventListener("click", reindex);
 
+// --- живая панель браузера агента ---
+const br = {
+  panel: $("#browser"), img: $("#br-img"), empty: $("#br-empty"), view: $("#br-view"),
+  url: $("#br-url"), agent: $("#br-agent"), ws: null, retry: 0, frameUrl: null,
+  userClosed: false, // пользователь сам закрыл панель — не открывать её автоматически
+};
+
+function showBrowser(open) {
+  br.panel.hidden = !open;
+  $("#btn-browser").setAttribute("aria-pressed", String(open));
+  store.set("lm-agent-browser-open", open ? "1" : "0");
+}
+
+function brSend(payload) {
+  if (br.ws && br.ws.readyState === WebSocket.OPEN) br.ws.send(JSON.stringify(payload));
+}
+
+function connectBrowser() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const q = new URLSearchParams();
+  if (token) q.set("token", token);
+  br.ws = new WebSocket(`${proto}://${location.host}/ws/browser?${q}`);
+  br.ws.binaryType = "blob";
+  br.ws.onopen = () => { br.retry = 0; };
+  br.ws.onclose = (e) => {
+    if (e.code === 1008) return; // браузер отключён на сервере
+    setTimeout(connectBrowser, Math.min(1000 * 2 ** br.retry++, 15000));
+  };
+  br.ws.onmessage = (e) => {
+    if (typeof e.data !== "string") return showFrame(e.data);
+    const ev = JSON.parse(e.data);
+    if (ev.type === "meta") {
+      if (document.activeElement !== br.url) br.url.value = ev.url === "about:blank" ? "" : ev.url;
+      br.agent.hidden = !ev.agent;
+      br.panel.classList.toggle("agent", !!ev.agent);
+      if (ev.agent && br.panel.hidden && !br.userClosed) showBrowser(true);
+    } else if (ev.type === "error") {
+      addMessage("error", `Браузер: ${ev.text}`);
+    }
+  };
+}
+
+function showFrame(blob) {
+  const url = URL.createObjectURL(blob);
+  br.img.onload = () => { if (br.frameUrl) URL.revokeObjectURL(br.frameUrl); br.frameUrl = url; };
+  br.img.src = url;
+  br.img.hidden = false;
+  br.empty.hidden = true;
+}
+
+// координаты клика на картинке → координаты страницы
+function pagePoint(e) {
+  const rect = br.img.getBoundingClientRect();
+  return {
+    x: Math.round((e.clientX - rect.left) * br.img.naturalWidth / rect.width),
+    y: Math.round((e.clientY - rect.top) * br.img.naturalHeight / rect.height),
+  };
+}
+
+br.img.addEventListener("click", (e) => {
+  br.view.focus({ preventScroll: true });
+  brSend({ type: "click", ...pagePoint(e) });
+});
+
+// печать: обычные символы копим и отправляем пачкой, служебные клавиши — сразу
+const SPECIAL_KEYS = new Set(["Enter", "Backspace", "Tab", "Escape", "Delete", "ArrowUp", "ArrowDown",
+  "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+let typed = "", typeTimer = 0;
+function flushTyped() {
+  if (typed) brSend({ type: "type", text: typed });
+  typed = "";
+}
+br.view.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey) return; // Cmd+V и прочее обрабатываем отдельно
+  if (e.key.length === 1) {
+    typed += e.key;
+    clearTimeout(typeTimer);
+    typeTimer = setTimeout(flushTyped, 120);
+  } else if (SPECIAL_KEYS.has(e.key)) {
+    flushTyped();
+    brSend({ type: "key", key: e.key });
+  } else {
+    return;
+  }
+  e.preventDefault();
+});
+br.view.addEventListener("paste", (e) => {
+  const text = e.clipboardData.getData("text");
+  if (text) { flushTyped(); brSend({ type: "type", text }); }
+  e.preventDefault();
+});
+
+let wheelDy = 0, wheelTimer = 0;
+br.view.addEventListener("wheel", (e) => {
+  if (br.img.hidden) return;
+  e.preventDefault();
+  wheelDy += e.deltaY;
+  if (!wheelTimer) wheelTimer = setTimeout(() => {
+    brSend({ type: "scroll", dy: Math.round(wheelDy) });
+    wheelDy = 0;
+    wheelTimer = 0;
+  }, 120);
+}, { passive: false });
+
+$("#br-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const url = br.url.value.trim();
+  if (url) brSend({ type: "navigate", url });
+  br.url.blur();
+});
+$("#br-back").addEventListener("click", () => brSend({ type: "back" }));
+$("#br-close").addEventListener("click", () => { br.userClosed = true; showBrowser(false); });
+$("#btn-browser").addEventListener("click", () => {
+  const open = br.panel.hidden;
+  br.userClosed = !open;
+  showBrowser(open);
+  if (open) br.url.focus();
+});
+
 // --- старт ---
 api("/api/info")
   .then((info) => {
@@ -455,6 +574,12 @@ api("/api/info")
     $("#docs-dir").textContent = info.docs_dir;
     if (!info.memory) $("#btn-memory").hidden = true;
     if (!info.docs) $("#btn-docs").hidden = true;
+    if (info.browser) {
+      connectBrowser();
+      if (store.get("lm-agent-browser-open") === "1") showBrowser(true);
+    } else {
+      $("#btn-browser").hidden = true;
+    }
     if (info.auto_approve) els.model.textContent += " · без подтверждений";
   })
   .catch((e) => addMessage("error", `Сервер недоступен: ${e.message}`));

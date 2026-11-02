@@ -136,3 +136,25 @@ def test_docs_api(make):
     assert client.delete("/api/docs/..%2F..%2Fetc%2Fpasswd").status_code in (400, 404)
     assert client.delete("/api/docs/hr.md").status_code == 200
     assert client.get("/api/docs").json() == []
+
+
+def test_live_browser_panel(make, tmp_path):
+    page = tmp_path / "p.html"
+    page.write_text("<html><body style='margin:0'><button id=b style='width:300px;height:100px' "
+                    "onclick=\"document.title='нажато'\">Жми</button></body></html>")
+    client = make(browser_headless=True)
+    with client.websocket_connect("/ws/browser") as ws:
+        assert ws.receive_json()["type"] == "status"
+        ws.send_json({"type": "navigate", "url": page.as_uri()})
+        meta = ws.receive_json()
+        if meta.get("type") == "error":
+            pytest.skip(f"браузер недоступен: {meta['text']}")
+        assert meta["type"] == "meta" and meta["url"].endswith("p.html")
+        assert ws.receive_bytes()[:2] == b"\xff\xd8"  # JPEG-кадр
+        ws.send_json({"type": "click", "x": 50, "y": 50})
+        for _ in range(10):  # ждём кадр с новым заголовком
+            ev = ws.receive_json()
+            ws.receive_bytes()
+            if ev.get("title") == "нажато":
+                break
+        assert ev["title"] == "нажато"

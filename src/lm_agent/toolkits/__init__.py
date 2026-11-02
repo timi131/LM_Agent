@@ -11,11 +11,19 @@ from . import basic, browser, docs, files, mail, memory, services, shell, web
 ALL = ("basic", "files", "web", "browser", "shell", "services", "mail", "docs", "memory")
 
 
+def make_browser(settings: Settings) -> browser.Browser:
+    return browser.Browser(
+        settings.data_dir / "browser", settings.workspace / "screenshots",
+        settings.browser_headless, settings.browser_channel,
+    )
+
+
 def build_registry(
     settings: Settings,
     client: Any,
     approver: Approver | None = None,
     enabled: tuple[str, ...] = ALL,
+    browser_instance: browser.Browser | None = None,
 ) -> tuple[ToolRegistry, memory.Memory | None]:
     registry = ToolRegistry(approver=approver)
     mem = None
@@ -25,7 +33,7 @@ def build_registry(
     if "web" in enabled:
         web.register(registry)
     if "browser" in enabled:
-        b = browser.Browser(settings.data_dir / "browser", settings.workspace / "screenshots", settings.browser_headless, settings.browser_channel)
+        b = browser_instance or make_browser(settings)
         browser.register(registry, b, settings.browser_confirm)
     if "shell" in enabled:
         shell.register(registry, fa or files.FileAccess(settings.workspace, settings.file_roots), settings.command_timeout)

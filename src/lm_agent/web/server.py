@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from ..agent import Agent, ToolEvent
 from ..config import Settings
-from ..toolkits import ALL, build_registry
+from ..toolkits import ALL, build_registry, make_browser
 
 STATIC = Path(__file__).parent / "static"
 APPROVAL_TIMEOUT = 300
@@ -151,7 +151,8 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
         if channel:
             channel.send({"type": "delta", "text": text})
 
-    registry, memory = build_registry(settings, client, approver, toolkits)
+    browser = make_browser(settings) if "browser" in toolkits else None
+    registry, memory = build_registry(settings, client, approver, toolkits, browser_instance=browser)
     sessions: dict[str, Agent] = {}
     locks: dict[str, asyncio.Lock] = {}
 
@@ -206,6 +207,7 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
             "docs_dir": str(settings.docs_dir.resolve()),
             "memory": memory is not None,
             "docs": "docs" in toolkits,
+            "browser": browser is not None,
         }
 
     @app.post("/api/chat")
@@ -301,6 +303,47 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
             raise HTTPException(404, "Набор docs отключён")
         return {"result": await asyncio.to_thread(registry.call, "index_documents", {})}
 
+    # --- живая панель браузера агента ---
+
+    @app.websocket("/ws/browser")
+    async def ws_browser(ws: WebSocket):
+        if browser is None or not _same_origin(ws.headers) or (token and ws.query_params.get("token") != token):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        loop = asyncio.get_running_loop()
+        latest: dict[str, Any] = {}
+        ready = asyncio.Event()
+
+        def on_frame(data: bytes, meta: dict) -> None:  # из потока браузера
+            latest["frame"] = (data, meta)  # промежуточные кадры отбрасываются, если сеть не успевает
+            loop.call_soon_threadsafe(ready.set)
+
+        async def sender() -> None:
+            while True:
+                await ready.wait()
+                ready.clear()
+                data, meta = latest.pop("frame")
+                await ws.send_json({"type": "meta", **meta})
+                await ws.send_bytes(data)
+
+        await ws.send_json({"type": "status", **browser.status()})
+        browser.add_viewer(on_frame)
+        send_task = asyncio.create_task(sender())
+        try:
+            while True:
+                ev = await ws.receive_json()
+                kind = ev.pop("type", "")
+                try:
+                    await asyncio.to_thread(browser.user_action, kind, **ev)
+                except Exception as e:  # noqa: BLE001
+                    await ws.send_json({"type": "error", "text": _error_text(e, settings)})
+        except WebSocketDisconnect:
+            pass
+        finally:
+            browser.remove_viewer(on_frame)
+            send_task.cancel()
+
     # --- чат в браузере ---
 
     @app.websocket("/ws")
@@ -369,6 +412,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
+    if "LM_AGENT_BROWSER_HEADLESS" not in os.environ:
+        # в веб-чате браузер виден в живой панели — отдельное окно Chrome не нужно
+        settings.browser_headless = True
     if args.model:
         settings.model = args.model
     if args.yes:

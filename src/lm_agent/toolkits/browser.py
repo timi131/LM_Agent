@@ -108,14 +108,21 @@ READ_JS = "() => (document.body && document.body.innerText || '').replace(/\\n{3
 class _Worker(threading.Thread):
     """Поток, в котором живёт Playwright. Все операции с браузером выполняются здесь по очереди."""
 
-    def __init__(self) -> None:
+    def __init__(self, idle: Callable[[], None] | None = None, interval: float = 0.5) -> None:
         super().__init__(daemon=True, name="lm-agent-browser")
         self.jobs: queue.Queue = queue.Queue()
+        # idle вызывается после каждой задачи и раз в interval секунд простоя (кадры для живой панели)
+        self.idle = idle
+        self.interval = interval
         self.start()
 
     def run(self) -> None:
         while True:
-            fn, fut = self.jobs.get()
+            try:
+                fn, fut = self.jobs.get(timeout=self.interval)
+            except queue.Empty:
+                self._idle()
+                continue
             if fn is None:
                 fut.set_result(None)
                 return
@@ -123,6 +130,14 @@ class _Worker(threading.Thread):
                 fut.set_result(fn())
             except BaseException as e:  # noqa: BLE001 — исключение уходит вызывающему потоку
                 fut.set_exception(e)
+            self._idle()
+
+    def _idle(self) -> None:
+        if self.idle:
+            try:
+                self.idle()
+            except Exception:  # noqa: BLE001 — кадр не снялся — не страшно
+                pass
 
     def call(self, fn: Callable[[], Any], timeout: float = CALL_TIMEOUT) -> Any:
         fut: Future = Future()
@@ -163,14 +178,79 @@ class Browser:
         self._pw = None
         self._context = None
         self._page = None
+        # Живая панель: кто смотрит экран браузера (callback(jpeg, meta)), последний кадр.
+        self._viewers: set[Callable[[bytes, dict], None]] = set()
+        self._last_frame: tuple[bytes, dict] | None = None
+        self.agent_active = False
         atexit.register(self.close)
 
     # --- всё ниже, кроме call/close, выполняется в потоке браузера ---
 
     def call(self, fn: Callable[[], Any]) -> Any:
         if self._worker is None:
-            self._worker = _Worker()
+            self._worker = _Worker(idle=self._capture)
         return self._worker.call(fn)
+
+    # --- живая панель: кадры экрана и действия пользователя ---
+
+    def add_viewer(self, callback: Callable[[bytes, dict], None]) -> None:
+        self._viewers.add(callback)
+        if self._last_frame:
+            callback(*self._last_frame)
+
+    def remove_viewer(self, callback: Callable[[bytes, dict], None]) -> None:
+        self._viewers.discard(callback)
+
+    def status(self) -> dict:
+        return {"open": self._context is not None, "agent": self.agent_active, "url": self.url}
+
+    def _capture(self) -> None:
+        """Выполняется в потоке браузера: снимает кадр, если кто-то смотрит."""
+        if not self._viewers or self._context is None or self._page is None or self._page.is_closed():
+            return
+        page = self._page
+        data = page.screenshot(type="jpeg", quality=60, timeout=3_000, animations="allow")
+        meta = {"url": page.url, "title": page.title(), "agent": self.agent_active}
+        if self._last_frame and self._last_frame[0] == data and self._last_frame[1] == meta:
+            return  # ничего не изменилось — не гоняем одинаковые кадры
+        self._last_frame = (data, meta)
+        for callback in list(self._viewers):
+            callback(data, meta)
+
+    def _safe_capture(self) -> None:
+        try:
+            self._capture()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def user_action(self, kind: str, **kw: Any) -> None:
+        """Действие пользователя из живой панели (клик, ввод, прокрутка, переход). Подтверждения не нужны."""
+
+        def job():
+            page = self._ensure()
+            if kind == "click":
+                page.mouse.click(float(kw["x"]), float(kw["y"]))
+            elif kind == "type":
+                page.keyboard.type(str(kw["text"])[:2000])
+            elif kind == "key":
+                page.keyboard.press(str(kw["key"])[:40])
+            elif kind == "scroll":
+                page.mouse.wheel(0, max(-3000, min(3000, float(kw.get("dy", 0)))))
+            elif kind == "navigate":
+                url = str(kw["url"]).strip()
+                if not re.match(r"^(https?|file)://", url):
+                    url = "https://" + url
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            elif kind == "back":
+                page.go_back(wait_until="domcontentloaded", timeout=30_000)
+            elif kind == "open":
+                pass  # просто запустить браузер
+            else:
+                raise ValueError(f"неизвестное действие {kind!r}")
+            page.wait_for_timeout(150)
+            self._last_frame = None  # следующий кадр — обязательно отправить
+
+        self.call(job)
 
     def _ensure(self):
         if self._context is None:
@@ -254,12 +334,18 @@ class Browser:
 
     def run(self, action: Callable[[Any], Any], snapshot: bool = True) -> str:
         def job():
-            page = self._ensure()
-            result = action(page)
-            if not snapshot:
-                return result
-            self._settle(self._ensure())  # действие могло открыть новую вкладку
-            return self._snapshot(self._ensure())
+            self.agent_active = True
+            try:
+                page = self._ensure()
+                result = action(page)
+                self._safe_capture()  # кадр сразу после действия — зритель видит, что сделал агент
+                if not snapshot:
+                    return result
+                self._settle(self._ensure())  # действие могло открыть новую вкладку
+                self._safe_capture()
+                return self._snapshot(self._ensure())
+            finally:
+                self.agent_active = False
 
         return self.call(job)
 
