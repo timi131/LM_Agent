@@ -1,0 +1,12 @@
+{
+  "okocrm": {
+    "description": "OkoCRM: сделки, контакты, задачи",
+    "base_url": "https://api.okocrm.com/v2",
+    "headers": {"Authorization": "Bearer ${OKOCRM_TOKEN}"}
+  },
+  "github": {
+    "description": "GitHub REST API",
+    "base_url": "https://api.github.com",
+    "headers": {"Authorization": "Bearer ${GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
+  }
+}

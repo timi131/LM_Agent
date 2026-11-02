@@ -1,0 +1,29 @@
+[project]
+name = "lm-agent"
+version = "0.1.0"
+description = "Локальный LLM-агент с инструментами на базе Ollama"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ddgs>=9.16.1",
+    "ollama>=0.4",
+    "pypdf>=6.21.4",
+    "python-docx>=1.2.0",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+lm-agent = "lm_agent.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lm_agent"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
