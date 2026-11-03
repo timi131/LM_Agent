@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import tempfile
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -19,7 +20,7 @@ from urllib.parse import urlparse
 
 import ollama
 from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -33,6 +34,7 @@ from ..toolkits import ALL
 STATIC = Path(__file__).parent / "static"
 APPROVAL_TIMEOUT = 300
 UPLOAD_LIMIT = 50 * 1024 * 1024
+VOICE_LIMIT = 25 * 1024 * 1024
 
 
 class Channel:
@@ -129,10 +131,18 @@ def create_app(
     register_tools(scheduler)
     bot = telegram.from_env(hub, scheduler) if background else None
 
+    def warm_all() -> None:
+        hub.warmup()  # языковая модель — сначала: она нужна каждому сообщению
+        if hub.transcriber is not None:
+            try:  # затем распознавание, чтобы первое голосовое не ждало загрузки модели с диска
+                hub.transcriber._load()
+            except Exception:  # noqa: BLE001 — модель ещё не скачана или нет сети: загрузим при первом голосовом
+                pass
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if background:
-            threading.Thread(target=hub.warmup, daemon=True, name="lm-agent-warmup").start()
+            threading.Thread(target=warm_all, daemon=True, name="lm-agent-warmup").start()
             scheduler.start()
             if bot:
                 bot.start()
@@ -152,11 +162,20 @@ def create_app(
             given = request.headers.get("x-token") or request.query_params.get("token")
             if given != token:
                 return JSONResponse({"detail": "нужен токен"}, status_code=401)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            # после обновления агента браузер должен взять новую страницу, а не старую из кэша
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(STATIC / "index.html")
+        # метка версии в ссылках на скрипт и стили: после обновления браузер не возьмёт старые из кэша
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        for name in ("app.js", "style.css"):
+            version = int((STATIC / name).stat().st_mtime)
+            html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={version}"')
+        return HTMLResponse(html)
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -173,6 +192,7 @@ def create_app(
             "docs": "docs" in toolkits,
             "browser": browser is not None,
             "telegram": bool(bot),
+            "voice": hub.transcriber is not None,
         }
 
     @app.post("/api/chat")
@@ -190,6 +210,29 @@ def create_app(
     def reset(session_id: str):
         hub.reset(session_id)
         return {"ok": True}
+
+    # --- голосовой ввод ---
+
+    @app.post("/api/transcribe")
+    async def transcribe(audio: UploadFile):
+        if hub.transcriber is None:
+            raise HTTPException(503, "Распознавание речи выключено: нужен пакет faster-whisper")
+        data = await audio.read()
+        if not data:
+            raise HTTPException(400, "Пустая запись")
+        if len(data) > VOICE_LIMIT:
+            raise HTTPException(413, "Запись слишком длинная")
+        suffix = Path(audio.filename or "voice.webm").suffix or ".webm"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(data)
+            path = Path(f.name)
+        try:
+            text = await asyncio.to_thread(hub.transcriber.transcribe, path)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(422, f"Не удалось распознать запись: {type(e).__name__}: {e}") from e
+        finally:
+            path.unlink(missing_ok=True)
+        return {"text": text}
 
     # --- расписание ---
 

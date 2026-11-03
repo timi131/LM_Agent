@@ -212,7 +212,7 @@ class TelegramBot:
     def _voice(self, chat_id: int, media: dict) -> None:
         """Голосовое → текст (локальный Whisper) → обычный запрос к агенту."""
         if self.transcriber is None:
-            self.send(chat_id, "Голосовые не настроены: установите faster-whisper и не отключайте LM_AGENT_WHISPER_MODEL.", plain=True)
+            self.send(chat_id, "Голосовые выключены: нужен пакет faster-whisper, а LM_AGENT_WHISPER_MODEL не должен быть off.", plain=True)
             return
         if media.get("duration", 0) > MAX_VOICE_SECONDS:
             self.send(chat_id, f"Слишком длинное голосовое: понимаю до {MAX_VOICE_SECONDS // 60} минут.", plain=True)
@@ -329,22 +329,8 @@ def from_env(hub: Hub, scheduler: Any = None) -> TelegramBot | None:
     allowed = set(os.getenv("TELEGRAM_ALLOWED_USERS", "").replace(";", ",").split(","))
     return TelegramBot(
         hub, token, allowed, scheduler, proxy=os.getenv("TELEGRAM_PROXY") or None,
-        transcriber=make_transcriber(hub.settings),
+        transcriber=hub.transcriber,
     )
-
-
-def make_transcriber(settings: Any):
-    """Распознавание голосовых, если установлен faster-whisper и оно не выключено (LM_AGENT_WHISPER_MODEL=off)."""
-    size = os.getenv("LM_AGENT_WHISPER_MODEL", "small").strip()
-    if size.lower() in ("", "off", "0", "none"):
-        return None
-    try:
-        import faster_whisper  # noqa: F401
-    except ImportError:
-        return None
-    from .speech import Transcriber
-
-    return Transcriber(size, settings.data_dir / "whisper", os.getenv("LM_AGENT_WHISPER_LANGUAGE") or None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,6 +362,11 @@ def main(argv: list[str] | None = None) -> int:
     bot.start()
     print(f"Бот @{getattr(bot, 'username', '?')} запущен · модель {settings.model} · Ctrl+C — выход")
     hub.warmup()
+    if hub.transcriber is not None:
+        try:
+            hub.transcriber._load()
+        except Exception:  # noqa: BLE001
+            pass
     try:
         while True:
             time.sleep(3600)

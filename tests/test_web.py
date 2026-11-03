@@ -171,3 +171,21 @@ def test_schedule_api(make):
     assert run["text"].strip() == "Итог: всё хорошо" and run["task"]["history"][0]["ok"]
     assert client.delete(f"/api/schedule/{task['id']}").status_code == 200
     assert client.get("/api/schedule").json() == []
+
+
+def test_transcribe_api(make):
+    client = make()
+
+    class FakeTranscriber:
+        def transcribe(self, path):
+            assert path.suffix == ".webm" and path.read_bytes() == b"webm-audio"
+            return "привет агент"
+
+    client.app.state.hub.transcriber = FakeTranscriber()
+    r = client.post("/api/transcribe", files={"audio": ("voice.webm", b"webm-audio", "audio/webm")})
+    assert r.json() == {"text": "привет агент"}
+    assert client.post("/api/transcribe", files={"audio": ("voice.webm", b"", "audio/webm")}).status_code == 400
+
+    client.app.state.hub.transcriber = None
+    r = client.post("/api/transcribe", files={"audio": ("voice.webm", b"x", "audio/webm")})
+    assert r.status_code == 503 and client.get("/api/info").json()["voice"] is False

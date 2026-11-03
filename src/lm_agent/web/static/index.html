@@ -46,6 +46,10 @@
 
   <form class="composer" id="composer">
     <textarea id="input" rows="1" placeholder="Напишите сообщение…" title="Enter — отправить, Shift+Enter — новая строка" autocomplete="off"></textarea>
+    <button type="button" id="mic" class="mic" title="Голосовой ввод: нажмите и говорите" hidden>
+      <svg class="mic-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+      <span class="mic-time" aria-live="polite"></span>
+    </button>
     <button type="submit" id="send" class="primary" title="Отправить">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z" fill="currentColor"/></svg>
     </button>

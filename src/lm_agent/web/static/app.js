@@ -325,6 +325,102 @@ $("#btn-new").addEventListener("click", () => {
   els.input.focus();
 });
 
+// --- голосовой ввод: запись в браузере → локальный Whisper на сервере → текст в поле ---
+const mic = { btn: $("#mic"), time: $("#mic .mic-time"), rec: null, chunks: [], started: 0, timer: 0, cancelled: false };
+const MAX_RECORD_MS = 5 * 60 * 1000;
+
+function pickMime() {
+  for (const type of ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4", "audio/webm"]) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "";
+}
+
+function micState(state) {
+  mic.btn.classList.toggle("recording", state === "recording");
+  mic.btn.classList.toggle("busy", state === "busy");
+  mic.btn.disabled = state === "busy";
+  mic.btn.title = {
+    recording: "Идёт запись — нажмите ещё раз или Enter, чтобы закончить; Esc — отменить",
+    busy: "Распознаю…",
+  }[state] || "Голосовой ввод: нажмите и говорите";
+  if (state !== "recording") mic.time.textContent = state === "busy" ? "…" : "";
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    addMessage("error", "Микрофон недоступен в этом браузере. Голосовой ввод работает на http://127.0.0.1 или по https.");
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    addMessage("error", "Нет доступа к микрофону: разрешите его для этой страницы в настройках браузера.");
+    return;
+  }
+  const mimeType = pickMime();
+  mic.rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  mic.chunks = [];
+  mic.cancelled = false;
+  mic.rec.ondataavailable = (e) => { if (e.data.size) mic.chunks.push(e.data); };
+  mic.rec.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    clearInterval(mic.timer);
+    const type = mic.rec.mimeType || mimeType || "audio/webm";
+    mic.rec = null;
+    if (mic.cancelled || !mic.chunks.length) return micState("idle");
+    transcribe(new Blob(mic.chunks, { type }));
+  };
+  mic.rec.start();
+  mic.started = performance.now();
+  micState("recording");
+  mic.timer = setInterval(() => {
+    const ms = performance.now() - mic.started;
+    const sec = Math.floor(ms / 1000);
+    mic.time.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+    if (ms > MAX_RECORD_MS) stopRecording();
+  }, 250);
+}
+
+function stopRecording(cancel = false) {
+  if (!mic.rec) return;
+  mic.cancelled = cancel;
+  mic.rec.stop();
+}
+
+async function transcribe(blob) {
+  micState("busy");
+  const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+  const form = new FormData();
+  form.append("audio", blob, `voice.${ext}`);
+  try {
+    const { text } = await api("/api/transcribe", { method: "POST", body: form });
+    if (!text) {
+      addMessage("error", "Не разобрал речь — попробуйте ещё раз, ближе к микрофону.");
+    } else {
+      const current = els.input.value.trim();
+      els.input.value = current ? `${current} ${text}` : text;
+      autosize();
+      els.input.focus();
+      els.input.setSelectionRange(els.input.value.length, els.input.value.length);
+    }
+  } catch (e) {
+    addMessage("error", `Голосовой ввод: ${e.message}`);
+  } finally {
+    micState("idle");
+  }
+}
+
+mic.btn.addEventListener("click", () => (mic.rec ? stopRecording() : startRecording()));
+// во время записи Enter и Esc управляют записью, а не отправляют сообщение (перехват до поля ввода)
+document.addEventListener("keydown", (e) => {
+  if (!mic.rec || (e.key !== "Escape" && e.key !== "Enter")) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  stopRecording(e.key === "Escape");
+}, true);
+
 // --- боковая панель: память и документы ---
 function openDrawer(tab) {
   els.drawer.hidden = false;
@@ -690,6 +786,7 @@ api("/api/info")
     $("#docs-dir").textContent = info.docs_dir;
     if (!info.memory) $("#btn-memory").hidden = true;
     if (!info.docs) $("#btn-docs").hidden = true;
+    mic.btn.hidden = !info.voice;
     $("#tg-note").textContent = info.telegram ? " — в веб-чате и в Telegram" : " — здесь, во вкладке «Задачи» (Telegram не подключён)";
     if (info.browser) {
       connectBrowser();

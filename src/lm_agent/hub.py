@@ -15,6 +15,7 @@ import ollama
 
 from .agent import Agent, ToolEvent
 from .config import Settings
+from .speech import make_transcriber
 from .toolkits import ALL, build_registry, make_browser, make_context
 
 
@@ -65,6 +66,8 @@ class Hub:
         self.registry, self.memory = build_registry(
             settings, self.client, self._approve, toolkits, browser_instance=self.browser,
         )
+        # распознавание речи — одно на веб-чат и Telegram (модель в памяти одна)
+        self.transcriber = make_transcriber(settings)
         self.sessions: dict[str, Agent] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()

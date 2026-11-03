@@ -160,4 +160,4 @@ def test_voice_edge_cases(make):
     bot, api, _ = make(transcriber=None)
     api.updates = [voice()]
     bot.poll_once()
-    assert api.wait_for(lambda: any("Голосовые не настроены" in t for t in api.texts()))
+    assert api.wait_for(lambda: any("Голосовые выключены" in t for t in api.texts()))

@@ -388,3 +388,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline-colo
 .task .result.bad { color: var(--bad); }
 .task .del { border: none; color: var(--muted); padding: 0 4px; }
 .task .del:hover { color: var(--bad); }
+
+/* --- голосовой ввод --- */
+.composer button.mic {
+  background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+  width: auto; min-width: 46px; padding: 0 12px; gap: 6px; display: flex; align-items: center; justify-content: center;
+}
+.composer button.mic[hidden] { display: none; }
+.composer button.mic:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.mic-time { font-size: 13px; font-variant-numeric: tabular-nums; }
+.mic-time:empty { display: none; }
+.composer button.mic.recording {
+  background: var(--brand); border-color: var(--brand); color: #fff; animation: rec 1.4s infinite;
+}
+@keyframes rec { 0%, 100% { box-shadow: 0 0 0 0 rgba(219, 51, 64, .45); } 50% { box-shadow: 0 0 0 7px rgba(219, 51, 64, 0); } }
+.composer button.mic.busy { color: var(--accent); cursor: progress; }
+.composer button.mic.busy .mic-icon { animation: blink 1s infinite; }
