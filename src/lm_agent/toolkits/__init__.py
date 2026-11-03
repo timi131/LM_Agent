@@ -7,9 +7,9 @@ from typing import Any
 
 from ..config import Settings
 from ..tools import Approver, ToolRegistry
-from . import basic, browser, docs, files, mail, memory, services, shell, tables, web
+from . import basic, browser, docs, files, mail, memory, reports, services, shell, tables, web
 
-ALL = ("basic", "files", "web", "browser", "shell", "services", "mail", "docs", "tables", "memory")
+ALL = ("basic", "files", "web", "browser", "shell", "services", "mail", "docs", "tables", "reports", "memory")
 
 
 def make_browser(settings: Settings) -> browser.Browser:
@@ -45,8 +45,13 @@ def build_registry(
     if "docs" in enabled:
         index = docs.DocIndex(client, settings.embed_model, settings.docs_dir, settings.data_dir / "doc_index.json")
         docs.register(registry, index)
+    table_store = None
     if "tables" in enabled:
-        tables.register(registry, tables.Tables([settings.docs_dir, settings.workspace], settings.data_dir / "tables"))
+        table_store = tables.Tables([settings.docs_dir, settings.workspace], settings.data_dir / "tables")
+        tables.register(registry, table_store)
+    if "reports" in enabled:
+        settings.workspace.mkdir(parents=True, exist_ok=True)
+        reports.register(registry, settings.workspace.resolve(), table_store)
     if "memory" in enabled:
         mem = memory.Memory(settings.data_dir / "memory.json")
         memory.register(registry, mem)

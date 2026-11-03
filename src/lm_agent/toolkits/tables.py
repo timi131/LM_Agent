@@ -21,6 +21,11 @@ CATEGORY_LIMIT = 15  # колонки с таким числом разных з
 AUTO_FIX_RATIO = 0.75  # насколько значение из SQL должно быть похоже на настоящее, чтобы заменить его само
 
 
+# Отчёты, которые агент сам создал (workspace/reports), — не исходные данные: иначе он может
+# «посчитать» уже готовую сводку вместо настоящей выгрузки.
+EXCLUDED_DIRS = {"reports"}
+
+
 def find_tables(folders: list[Path]) -> list[Path]:
     seen, out = set(), []
     for folder in folders:
@@ -28,6 +33,8 @@ def find_tables(folders: list[Path]) -> list[Path]:
             continue
         for p in sorted(folder.rglob("*")):
             rel = p.relative_to(folder)
+            if rel.parts and rel.parts[0] in EXCLUDED_DIRS:
+                continue
             if p.is_file() and p.suffix.lower() in TABLE_EXTS and not any(x.startswith(".") for x in rel.parts):
                 if p.resolve() not in seen:
                     seen.add(p.resolve())

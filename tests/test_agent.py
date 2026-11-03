@@ -72,3 +72,20 @@ def test_repeated_identical_call_is_stopped(tmp_path):
     results = [m["content"] for m in agent.messages if m["role"] == "tool"]
     assert "Ошибка" in results[0] and "уже делал ровно этот вызов" in results[1]
     assert results[2].startswith("Не выполнено")
+
+
+def test_promise_without_action_is_nudged_once(tmp_path):
+    from lm_agent.agent import NUDGE
+
+    agent = make_agent([
+        answer("Данные посчитаны. Теперь я создам документ Word с этим отчётом."),
+        tool_call("calculate", expression="2+2"),
+        answer("Готово: 4"),
+    ], tmp_path)
+    assert agent.ask("сделай отчёт") == "Готово: 4"
+    assert [m["content"] for m in agent.messages if m["role"] == "user"] == ["сделай отчёт", NUDGE]
+
+    agent = make_agent([answer("Сейчас найду."), answer("Сейчас найду ещё раз.")], tmp_path)
+    assert agent.ask("x") == "Сейчас найду ещё раз."  # второй раз не подталкиваем — без зацикливания
+    agent = make_agent([answer("Привет! Чем помочь?")], tmp_path)
+    assert agent.ask("привет") == "Привет! Чем помочь?"  # обычный ответ не трогаем

@@ -149,3 +149,17 @@ def test_stale_snapshots_compacted(tmp_path):
     tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
     assert tool_msgs[0]["content"].endswith(STALE_NOTE)
     assert not tool_msgs[1]["content"].endswith(STALE_NOTE)
+
+
+def test_unreachable_site_explained(setup):
+    reg, _, _ = setup()
+    import socket
+
+    with socket.socket() as sock:  # свободный порт, где никто не слушает
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    out = reg.call("browser_open", {"url": f"http://127.0.0.1:{port}/"})
+    if "Браузер не найден" in out:
+        pytest.skip("Нет ни Chromium, ни Chrome")
+    assert out.startswith("⚠️ Сайт не открылся: сервер отклонил подключение (ERR_CONNECTION_REFUSED)")
+    assert "не агента" in out and "Элементы" not in out  # без бесполезного снимка страницы ошибки

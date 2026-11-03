@@ -189,3 +189,16 @@ def test_transcribe_api(make):
     client.app.state.hub.transcriber = None
     r = client.post("/api/transcribe", files={"audio": ("voice.webm", b"x", "audio/webm")})
     assert r.status_code == 503 and client.get("/api/info").json()["voice"] is False
+
+
+def test_download_created_file(make, tmp_path):
+    client = make()
+    report = tmp_path / "ws" / "reports" / "Отчёт.docx"
+    report.parent.mkdir(parents=True)
+    report.write_bytes(b"PK-docx")
+    r = client.get("/api/files/reports/Отчёт.docx")
+    assert r.status_code == 200 and r.content == b"PK-docx" and "attachment" in r.headers["content-disposition"]
+    secret = tmp_path / "secret.txt"
+    secret.write_text("пароль")
+    assert client.get("/api/files/../secret.txt").status_code == 404
+    assert client.get("/api/files/..%2F..%2Fsecret.txt").status_code == 404

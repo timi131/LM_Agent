@@ -153,8 +153,31 @@ function addTool(name, args, result) {
   pre.textContent = result;
   d.append(summary, pre);
   els.messages.append(d);
+  const file = /Файл готов: (.+?) \((\d[^)]*)\)/.exec(result || "");
+  if (file) els.messages.append(fileCard(file[1], file[2]));
   updateEmpty();
   scrollDown();
+}
+
+function fileCard(path, size) {
+  const name = path.split("/").pop();
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  const card = document.createElement("a");
+  card.className = "file-card";
+  card.href = `/api/files/${path.split("/").map(encodeURIComponent).join("/")}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  card.download = name;
+  const icon = document.createElement("span");
+  icon.className = `file-icon ${ext}`;
+  icon.textContent = { docx: "W", xlsx: "X", pdf: "PDF", md: "MD" }[ext] || "📄";
+  const text = document.createElement("span");
+  text.className = "file-text";
+  const b = document.createElement("b");
+  b.textContent = name;
+  const small = document.createElement("small");
+  small.textContent = `${size} · Скачать`;
+  text.append(b, small);
+  card.append(icon, text);
+  return card;
 }
 
 function addApproval(ev) {
@@ -644,6 +667,7 @@ function taskCard(t) {
     body.className = "result" + (last.ok ? "" : " bad");
     body.textContent = last.text;
     det.append(sum, body);
+    for (const f of last.files || []) det.append(fileCard(f, "отчёт"));
     if (last.tools && last.tools.length) {
       const used = document.createElement("div");
       used.className = "task-next";

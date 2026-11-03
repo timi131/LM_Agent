@@ -105,6 +105,49 @@ SNAPSHOT_JS = r"""
 READ_JS = "() => (document.body && document.body.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim()"
 
 
+NAV_TIMEOUT = 25_000
+
+
+class Note(str):
+    """Пояснение к результату действия (сайт недоступен, долго грузится) — показывается модели перед снимком."""
+
+
+def navigate(page, go: Callable[[], Any]) -> Note | None:
+    """Переход по адресу без ложных ошибок: переадресации дожидаемся, частично загруженную
+    страницу показываем, а недоступный сайт описываем словами, чтобы модель не повторяла попытки."""
+    try:
+        go()
+        return None
+    except Exception as e:  # noqa: BLE001 — разбираем ошибки Playwright по тексту
+        message = str(e).splitlines()[0]
+        failed = page.url.startswith("chrome-error://") or page.url == "about:blank"
+        if "interrupted by another navigation" in message:
+            try:  # сайт переадресовал на другую страницу — ждём её
+                page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+            except Exception:  # noqa: BLE001
+                pass
+            failed = page.url.startswith("chrome-error://")
+            if not failed:
+                return None
+        code = re.search(r"net::(ERR_[A-Z_]+)", message)
+        if "Timeout" in message and not failed:
+            return Note("Страница грузится долго — ниже то, что успело загрузиться.")
+        if "Timeout" in message or code or failed:
+            reason = {
+                "ERR_NAME_NOT_RESOLVED": "такого адреса не существует или не работает DNS",
+                "ERR_INTERNET_DISCONNECTED": "нет подключения к интернету",
+                "ERR_CONNECTION_REFUSED": "сервер отклонил подключение",
+                "ERR_CERT_AUTHORITY_INVALID": "у сайта недействительный сертификат",
+            }.get(code.group(1) if code else "") or (
+                "браузер не смог подключиться" if code else f"сервер не ответил за {NAV_TIMEOUT // 1000} с"
+            )
+            return Note(
+                f"Сайт не открылся: {reason}{f' ({code.group(1)})' if code else ''}. Это проблема сети, VPN "
+                "или самого сайта, а не агента. Не повторяй попытку больше одного раза — сообщи пользователю."
+            )
+        raise
+
+
 class _Worker(threading.Thread):
     """Поток, в котором живёт Playwright. Все операции с браузером выполняются здесь по очереди."""
 
@@ -240,9 +283,9 @@ class Browser:
                 url = str(kw["url"]).strip()
                 if not re.match(r"^(https?|file)://", url):
                     url = "https://" + url
-                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                navigate(page, lambda: page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT))
             elif kind == "back":
-                page.go_back(wait_until="domcontentloaded", timeout=30_000)
+                navigate(page, lambda: page.go_back(wait_until="domcontentloaded", timeout=NAV_TIMEOUT))
             elif kind == "open":
                 pass  # просто запустить браузер
             else:
@@ -341,9 +384,22 @@ class Browser:
                 self._safe_capture()  # кадр сразу после действия — зритель видит, что сделал агент
                 if not snapshot:
                     return result
-                self._settle(self._ensure())  # действие могло открыть новую вкладку
+                page = self._ensure()  # действие могло открыть новую вкладку
+                if isinstance(result, Note) and page.url.startswith(("chrome-error://", "about:blank")):
+                    return f"⚠️ {result}"  # снимок страницы с ошибкой Chrome модели ничего не даст
+                self._settle(page)
                 self._safe_capture()
-                return self._snapshot(self._ensure())
+                try:
+                    shot = self._snapshot(page)
+                except Exception:  # noqa: BLE001 — страница ещё переходит/грузится: даём ей секунду и пробуем снова
+                    page.wait_for_timeout(1500)
+                    try:
+                        shot = self._snapshot(self._ensure())
+                    except Exception:
+                        if isinstance(result, Note):
+                            return f"⚠️ {result} Страница всё ещё загружается — снимок пока недоступен."
+                        raise
+                return f"⚠️ {result}\n\n{shot}" if isinstance(result, Note) else shot
             finally:
                 self.agent_active = False
 
@@ -411,7 +467,7 @@ def register(registry: ToolRegistry, browser: Browser, confirm_mode: str = "risk
         """
         if not re.match(r"^(https?|file)://", url):
             url = "https://" + url
-        return browser.run(lambda page: page.goto(url, wait_until="domcontentloaded", timeout=30_000))
+        return browser.run(lambda page: navigate(page, lambda: page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)))
 
     @registry.register
     def browser_snapshot() -> str:
@@ -492,7 +548,7 @@ def register(registry: ToolRegistry, browser: Browser, confirm_mode: str = "risk
     @registry.register
     def browser_back() -> str:
         """Возвращается на предыдущую страницу."""
-        return browser.run(lambda page: page.go_back(wait_until="domcontentloaded", timeout=30_000))
+        return browser.run(lambda page: navigate(page, lambda: page.go_back(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)))
 
     @registry.register
     def browser_tabs(switch_to: int = 0) -> str:

@@ -198,8 +198,10 @@ class Scheduler:
             with self._lock:
                 self._running.discard(task_id)
         with self._lock:
-            tools = [{"name": e["name"], "arguments": e["arguments"]} for e in collector.events if e.get("type") == "tool"]
-            task["history"] = ([{"at": started.isoformat(timespec="seconds"), "ok": ok, "text": text, "tools": tools}]
+            tool_events = [e for e in collector.events if e.get("type") == "tool"]
+            tools = [{"name": e["name"], "arguments": e["arguments"]} for e in tool_events]
+            files = [m.group(1) for e in tool_events if (m := re.search(r"Файл готов: (.+?) \(\d", e.get("result", "")))]
+            task["history"] = ([{"at": started.isoformat(timespec="seconds"), "ok": ok, "text": text, "tools": tools, "files": files}]
                                + task.get("history", []))[:HISTORY]
             task["last_run"] = started.isoformat(timespec="seconds")
             self.save()

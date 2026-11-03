@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -24,6 +25,14 @@ LOOP_STOP = (
     "Не выполнено: этот вызов с теми же аргументами уже был несколько раз. "
     "Смени подход или ответь пользователю по тому, что уже известно."
 )
+
+# Маленькие модели любят написать «Теперь я создам документ» и закончить ответ, ничего не вызвав.
+PROMISE = re.compile(
+    r"(теперь|сейчас|далее|давайте|затем|приступаю|итак)[,\s]+(я\s+)?(созда|сдела|сформиру|выполн|откро|найд|"
+    r"сохран|запиш|выгруж|посчита|отправ|постав|подготов|оформл|провер)\w*",
+    re.I,
+)
+NUDGE = "Продолжай: сделай это сейчас — вызови нужный инструмент, а не описывай словами."
 
 # Результаты этих инструментов — снимки состояния (страницы браузера). Актуален только последний,
 # старые занимают контекст, поэтому их сокращаем.
@@ -72,6 +81,7 @@ class Agent:
         options = {"temperature": self.settings.temperature, "num_ctx": self.settings.num_ctx, **self.settings.options}
 
         repeats: dict[str, int] = {}
+        nudged = False
         for _ in range(self.settings.max_steps):
             self._compact_snapshots()
             request = dict(model=self.settings.model, messages=self.messages, tools=self.tools.schemas(), options=options)
@@ -81,6 +91,11 @@ class Agent:
 
             self.messages.append({"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})})
             if not tool_calls:
+                tail = content[-300:]
+                if not nudged and self.tools.names() and PROMISE.search(tail):
+                    nudged = True  # подталкиваем один раз: дальше пусть отвечает как есть
+                    self.messages.append({"role": "user", "content": NUDGE})
+                    continue
                 return content
 
             for call in tool_calls:

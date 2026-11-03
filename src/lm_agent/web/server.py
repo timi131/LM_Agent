@@ -20,12 +20,12 @@ from urllib.parse import urlparse
 
 import ollama
 from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import telegram
-from ..agent import Agent
+from ..agent import NUDGE, Agent
 from ..config import Settings
 from ..hub import Busy, Collector, Hub, error_text
 from ..scheduler import Scheduler, register_tools
@@ -91,7 +91,7 @@ def _history(agent: Agent) -> list[dict]:
             pending_args = [c.get("function", {}).get("arguments") or {} for c in m.get("tool_calls") or []]
             if m.get("content"):
                 out.append({"role": "assistant", "content": m["content"]})
-        elif m["role"] == "user":
+        elif m["role"] == "user" and m["content"] != NUDGE:
             out.append({"role": "user", "content": m["content"]})
         elif m["role"] == "tool":
             args = pending_args.pop(0) if pending_args else {}
@@ -210,6 +210,16 @@ def create_app(
     def reset(session_id: str):
         hub.reset(session_id)
         return {"ok": True}
+
+    # --- файлы, созданные агентом (отчёты) ---
+
+    @app.get("/api/files/{name:path}")
+    def download(name: str):
+        root = settings.workspace.resolve()
+        target = (root / name).resolve()
+        if root not in target.parents or not target.is_file():
+            raise HTTPException(404, "Файл не найден")
+        return FileResponse(target, filename=target.name)
 
     # --- голосовой ввод ---
 

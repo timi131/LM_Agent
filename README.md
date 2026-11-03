@@ -84,7 +84,8 @@ curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
 
 **Голосовые сообщения.** Голосовые, аудиофайлы и видеокружки распознаются локально через [faster-whisper](https://github.com/SYSTRAN/faster-whisper), без интернета и сторонних сервисов. Бот показывает распознанный текст («🎤 …») и отвечает на него как на обычное сообщение. При первом голосовом скачивается модель распознавания (`small`, около 480 МБ) в `~/.lm_agent/whisper`. Настройки:
 - `LM_AGENT_WHISPER_MODEL`: `tiny` / `base` / `small` (по умолчанию) / `medium` / `large-v3`. Чем больше модель, тем точнее и медленнее. `off` выключает распознавание.
-- `LM_AGENT_WHISPER_LANGUAGE`: язык, например `ru`. Если не задан, определяется автоматически.
+- `LM_AGENT_WHISPER_LANGUAGE`: язык речи, по умолчанию `ru`. `auto` включает автоопределение, но на коротких фразах оно часто ошибается.
+- `LM_AGENT_WHISPER_PROMPT`: подсказка со словарём. В неё входят слова, которые часто звучат в работе (по умолчанию REDSMS, SMS, заявка, ответственный, OkoCRM, операторы и т. п.), и Whisper пишет их правильно. Чтобы отключить подсказку, задайте `-`.
 
 Длина голосового — до 10 минут.
 
@@ -105,6 +106,7 @@ curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
 | `mail` | `read_emails` (IMAP), `send_email` (SMTP) | каждое письмо |
 | `docs` | `search_documents`, `index_documents` | — |
 | `tables` | `list_tables`, `table_info`, `table_query` (SQL по CSV/Excel) | — |
+| `reports` | `create_document` (Word, PDF, Excel), `create_spreadsheet`, `export_query` | — |
 | `memory` | `remember`, `list_memories`, `forget` | — |
 | (всегда в веб-чате и боте) | `schedule_task`, `list_scheduled`, `delete_scheduled` | постановка и удаление задач |
 
@@ -166,6 +168,15 @@ uv run playwright install chromium
 В поиск по смыслу таблицы попадают построчно, с названиями колонок (`Тема: …; Статус: …`). Так «найди заявки, где не приходят SMS» находит конкретные строки.
 
 Агент знает, какие файлы загружены: их список подставляется в системный промпт.
+
+### Документы и отчёты (Word, PDF, Excel)
+
+Попросите словами: «сделай отчёт в Word по заявкам», «PDF-справку по…», «выгрузи в Excel заявки по ответственным». Есть три инструмента:
+- `create_document` пишет отчёт в Markdown и сохраняет его как **Word**, **PDF** или **Excel** (`format`). В файле будут заголовки, списки, таблицы и жирный шрифт. PDF печатается через Chrome, поэтому кириллица и таблицы выглядят правильно. JavaScript и выход в сеть при печати отключены.
+- `create_spreadsheet` делает Excel из CSV или Markdown-таблицы. Шапка жирная, ширина колонок подбирается по содержимому, первая строка закреплена, числа сохраняются числами.
+- `export_query` выгружает результат SQL по вашей таблице прямо в Excel. Все строки и числа берутся из данных, модель их не переписывает и не может в них ошибиться. Это лучший способ «выгрузить в Excel».
+
+Файлы сохраняются в `workspace/reports`. В веб-чате у созданного файла появляется карточка с кнопкой «Скачать». Telegram-бот присылает файл в чат, в том числе если отчёт сделала задача по расписанию. Готовые отчёты не считаются исходными таблицами: агент не будет «анализировать» свою же сводку вместо настоящей выгрузки.
 
 ### Память
 
@@ -255,7 +266,7 @@ src/lm_agent/
   telegram.py         Telegram-бот
   web/server.py       веб-сервер: WebSocket-чат и HTTP API
   web/static/         страница чата (HTML/CSS/JS, без сборки)
-  toolkits/           basic, files, web, browser, shell, services, mail, docs, tables, memory
+  toolkits/           basic, files, web, browser, shell, services, mail, docs, tables, reports, memory
 tests/                тесты (без реальной модели и сети)
 ```
 

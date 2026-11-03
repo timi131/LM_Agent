@@ -25,6 +25,8 @@ APPROVAL_TIMEOUT = 300
 MAX_MESSAGE = 4000  # лимит Telegram — 4096 символов
 MAX_VOICE_SECONDS = 600
 MAX_DOWNLOAD = 20 * 1024 * 1024  # больше Bot API скачать не даёт
+MAX_UPLOAD = 50 * 1024 * 1024  # больше бот отправить не может
+FILE_RE = re.compile(r"Файл готов: (.+?) \(\d")
 HELP = (
     "Я — агент. Пишите задачу текстом или голосовым: найти в интернете, посчитать по таблице, "
     "поставить задачу по расписанию («каждое утро в 9 присылай сводку по заявкам»).\n\n"
@@ -65,12 +67,16 @@ class TelegramChannel:
     def __init__(self, bot: "TelegramBot", chat_id: int) -> None:
         self.bot, self.chat_id = bot, chat_id
         self.tools: list[str] = []
+        self.files: list[str] = []  # отчёты, созданные за этот запрос (пути внутри workspace)
         self.status_id: int | None = None
 
     def send(self, payload: dict) -> None:
         if payload.get("type") != "tool":
             return
         self.tools.append(payload["name"])
+        m = FILE_RE.search(payload.get("result", ""))
+        if m:
+            self.files.append(m.group(1))
         text = "⏳ Работаю…\n" + "\n".join(f"🔧 {name}" for name in self.tools[-15:])
         if self.status_id is None:
             self.status_id = self.bot.send(self.chat_id, text, plain=True)
@@ -90,6 +96,7 @@ class TelegramBot:
         self, hub: Hub, token: str, allowed: set[str], scheduler: Any = None,
         api: Callable[[str, dict], Any] | None = None, proxy: str | None = None,
         transcriber: Any = None, download: Callable[[str], bytes] | None = None,
+        upload: Callable[[int, Path], Any] | None = None,
     ) -> None:
         self.hub = hub
         self.token = token
@@ -98,6 +105,7 @@ class TelegramBot:
         self._http = None if api else httpx.Client(timeout=40, proxy=proxy or None)
         self._api = api or self._real_api
         self._download = download or self._real_download
+        self._upload = upload or self._real_upload
         self.transcriber = transcriber  # распознавание голосовых (speech.Transcriber); None — выключено
         self._pending: dict[str, tuple[threading.Event, list[bool]]] = {}
         self._stop = threading.Event()
@@ -118,6 +126,28 @@ class TelegramBot:
         resp = self._http.get(f"https://api.telegram.org/file/bot{self.token}/{file_path}")
         resp.raise_for_status()
         return resp.content
+
+    def _real_upload(self, chat_id: int, path: Path) -> Any:
+        with path.open("rb") as f:
+            resp = self._http.post(
+                f"https://api.telegram.org/bot{self.token}/sendDocument",
+                data={"chat_id": str(chat_id)}, files={"document": (path.name, f)}, timeout=120,
+            )
+        return resp.json().get("result")
+
+    def send_files(self, chat_id: int, files: list[str]) -> None:
+        root = self.hub.settings.workspace.resolve()
+        for rel in dict.fromkeys(files):
+            path = (root / rel).resolve()
+            if root not in path.parents or not path.is_file():
+                continue
+            if path.stat().st_size > MAX_UPLOAD:
+                self.send(chat_id, f"Файл {path.name} больше 50 МБ — Telegram не даст его отправить, он лежит в {rel}", plain=True)
+                continue
+            try:
+                self._upload(chat_id, path)
+            except Exception as e:  # noqa: BLE001
+                self.send(chat_id, f"Не удалось отправить {path.name}: {type(e).__name__}", plain=True)
 
     def api(self, method: str, **params: Any) -> Any:
         try:
@@ -273,13 +303,18 @@ class TelegramBot:
             self.api("deleteMessage", chat_id=chat_id, message_id=channel.status_id)
             answer = "🔧 " + ", ".join(dict.fromkeys(channel.tools)) + "\n\n" + answer
         self.send(chat_id, answer)
+        if channel.files:
+            self.send_files(chat_id, channel.files)
 
     # --- результаты задач по расписанию ---
 
     def deliver(self, task: dict, text: str) -> None:
         targets = [task["chat_id"]] if task.get("chat_id") else self.default_chats()
+        files = (task.get("history") or [{}])[0].get("files") or []
         for chat_id in targets:
             self.send(chat_id, f"🗓 **{task['name']}**\n\n{text}")
+            if files:
+                self.send_files(chat_id, files)
 
     def default_chats(self) -> list[int]:
         """Числовые id из списка разрешённых: личный чат с ботом имеет тот же id, что и пользователь."""

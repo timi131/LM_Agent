@@ -32,3 +32,21 @@ def test_decode_telegram_voice(tmp_path):
     assert samples.dtype.name == "float32"
     assert abs(len(samples) / SAMPLE_RATE - 1.0) < 0.1  # длительность сохранилась, частота 16 кГц
     assert 0.1 < abs(samples).max() <= 1.0  # сигнал есть и нормирован
+
+
+def test_transcriber_defaults(monkeypatch, tmp_path):
+    from lm_agent.config import Settings
+    from lm_agent.speech import DEFAULT_PROMPT, make_transcriber
+
+    settings = Settings(data_dir=tmp_path)
+    for name in ("LM_AGENT_WHISPER_MODEL", "LM_AGENT_WHISPER_LANGUAGE", "LM_AGENT_WHISPER_PROMPT"):
+        monkeypatch.delenv(name, raising=False)
+    tr = make_transcriber(settings)
+    assert tr.language == "ru" and tr.prompt == DEFAULT_PROMPT and tr.model_size == "small"
+    monkeypatch.setenv("LM_AGENT_WHISPER_LANGUAGE", "auto")
+    monkeypatch.setenv("LM_AGENT_WHISPER_PROMPT", "-")
+    monkeypatch.setenv("LM_AGENT_WHISPER_MODEL", "large-v3-turbo")
+    tr = make_transcriber(settings)
+    assert tr.language is None and tr.prompt is None and tr.model_size == "large-v3-turbo"
+    monkeypatch.setenv("LM_AGENT_WHISPER_MODEL", "off")
+    assert make_transcriber(settings) is None

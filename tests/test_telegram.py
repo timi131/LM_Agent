@@ -161,3 +161,17 @@ def test_voice_edge_cases(make):
     api.updates = [voice()]
     bot.poll_once()
     assert api.wait_for(lambda: any("Голосовые выключены" in t for t in api.texts()))
+
+
+def test_created_report_sent_as_file(make, tmp_path):
+    call = {"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {
+        "name": "create_document", "arguments": {"name": "Отчёт за сентябрь", "content": "# Итог\n\nВсё хорошо", "format": "md"}}}]}}
+    bot, api, _ = make(call, answer("Готово"))
+    from lm_agent.toolkits import reports  # create_document — из набора reports
+    reports.register(bot.hub.registry, bot.hub.settings.workspace.resolve())
+    sent = []
+    bot._upload = lambda chat_id, path: sent.append((chat_id, path.name, path.read_text()))
+    api.updates = [message("сделай отчёт")]
+    bot.poll_once()
+    assert api.wait_for(lambda: sent)
+    assert sent == [(42, "Отчёт за сентябрь.md", "# Итог\n\nВсё хорошо")]  # имя с пробелами

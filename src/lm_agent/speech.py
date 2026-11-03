@@ -16,11 +16,24 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 SAMPLE_RATE = 16_000  # Whisper ждёт моно 16 кГц
 
 
+# Подсказка распознаванию: слова, которые часто звучат в работе. Whisper пишет их правильно,
+# а не «редсмс» или «око срм». Свою задайте в LM_AGENT_WHISPER_PROMPT («-» — без подсказки).
+DEFAULT_PROMPT = (
+    "Разговор о сервисе рассылок REDSMS. SMS, рассылка, заявка, ответственный, статус, "
+    "OkoCRM, Telegram, личный кабинет, API, имя отправителя, Мегафон, МТС, Билайн, Т2."
+)
+
+
 class Transcriber:
-    def __init__(self, model_size: str, models_dir: Path, language: str | None = None) -> None:
+    def __init__(
+        self, model_size: str, models_dir: Path, language: str | None = "ru", prompt: str | None = DEFAULT_PROMPT,
+    ) -> None:
         self.model_size = model_size
         self.models_dir = models_dir
-        self.language = language or None  # None — определить язык автоматически
+        # Русский по умолчанию: на коротких фразах автоопределение языка часто ошибается.
+        # "auto" или None — определять язык самому.
+        self.language = None if (language or "auto").lower() == "auto" else language
+        self.prompt = prompt or None
         self._model = None
         self._lock = threading.Lock()  # модель одна, распознаём по очереди
 
@@ -40,6 +53,9 @@ class Transcriber:
             model = self._load()
             segments, _info = model.transcribe(
                 samples, language=self.language, vad_filter=True, beam_size=5,
+                initial_prompt=self.prompt,
+                # без этого Whisper на длинной записи подхватывает свои же ошибки и начинает повторяться
+                condition_on_previous_text=False,
             )
             return " ".join(seg.text.strip() for seg in segments).strip()
 
@@ -75,4 +91,9 @@ def make_transcriber(settings) -> Transcriber | None:
         import faster_whisper  # noqa: F401
     except ImportError:
         return None
-    return Transcriber(size, settings.data_dir / "whisper", os.getenv("LM_AGENT_WHISPER_LANGUAGE") or None)
+    prompt = os.getenv("LM_AGENT_WHISPER_PROMPT", DEFAULT_PROMPT).strip()
+    return Transcriber(
+        size, settings.data_dir / "whisper",
+        language=os.getenv("LM_AGENT_WHISPER_LANGUAGE", "").strip() or "ru",
+        prompt=None if prompt in ("", "-") else prompt,
+    )
