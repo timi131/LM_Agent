@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import math
 import threading
@@ -14,7 +16,7 @@ from typing import Any
 
 from ..tools import ToolRegistry
 
-TEXT_EXTS = {".md", ".txt", ".rst", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".toml", ".csv", ".html", ".htm", ".xml", ".ini", ".sql", ".sh"}
+TEXT_EXTS = {".md", ".txt", ".rst", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".html", ".htm", ".xml", ".ini", ".sql", ".sh"}
 CHUNK = 1200
 OVERLAP = 200
 BATCH = 32
@@ -39,8 +41,45 @@ def chunk_text(text: str, size: int = CHUNK, overlap: int = OVERLAP) -> list[str
     return [c for c in chunks if c]
 
 
+# Версия формата индекса: при изменении разбора документов индекс перестраивается.
+INDEX_FORMAT = 2
+
+
+def _table_rows(path: Path) -> list[list[str]]:
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        from openpyxl import load_workbook
+
+        wb = load_workbook(path, read_only=True, data_only=True)
+        rows = [["" if v is None else str(v) for v in r] for r in wb.worksheets[0].iter_rows(values_only=True)]
+        wb.close()
+        return rows
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text[:5000], delimiters=";,\t|")
+    except csv.Error:
+        dialect = csv.excel_tab if suffix == ".tsv" else csv.excel
+    return list(csv.reader(io.StringIO(text), dialect))
+
+
+def table_to_text(rows: list[list[str]]) -> str:
+    """Каждая строка таблицы — отдельный абзац «Колонка: значение; …»: так у каждого фрагмента
+    есть названия колонок, а режется текст по границам строк, а не посреди них."""
+    if not rows:
+        return ""
+    header = [h.strip() or f"Колонка {i + 1}" for i, h in enumerate(rows[0])]
+    records = []
+    for row in rows[1:]:
+        pairs = [f"{h}: {v.strip()}" for h, v in zip(header, row) if v and v.strip()]
+        if pairs:
+            records.append("; ".join(pairs))
+    return "\n\n".join(records)
+
+
 def read_document(path: Path) -> str:
     suffix = path.suffix.lower()
+    if suffix in (".csv", ".tsv", ".xlsx"):
+        return table_to_text(_table_rows(path))
     if suffix == ".pdf":
         from pypdf import PdfReader
 
@@ -55,6 +94,17 @@ def read_document(path: Path) -> str:
 
         text = html_to_text(text)
     return text
+
+
+def list_documents(docs_dir: Path) -> list[Path]:
+    if not docs_dir.exists():
+        return []
+    exts = TEXT_EXTS | {".pdf", ".docx", ".xlsx"}
+    return [
+        p for p in sorted(docs_dir.rglob("*"))
+        if p.is_file() and p.suffix.lower() in exts
+        and not any(part.startswith(".") for part in p.relative_to(docs_dir).parts)
+    ]
 
 
 def _normalize(vec: list[float]) -> list[float]:
@@ -72,7 +122,7 @@ class DocIndex:
         self._lock = threading.Lock()  # веб-интерфейс может обновлять индекс из нескольких потоков
         if index_file.exists():
             data = json.loads(index_file.read_text(encoding="utf-8"))
-            if data.get("model") == embed_model:
+            if data.get("model") == embed_model and data.get("format") == INDEX_FORMAT:
                 self.files = data.get("files", {})
 
     # embeddinggemma обучена с префиксами задач — с ними поиск заметно точнее.
@@ -90,14 +140,7 @@ class DocIndex:
         return vectors
 
     def candidates(self) -> list[Path]:
-        if not self.docs_dir.exists():
-            return []
-        exts = TEXT_EXTS | {".pdf", ".docx"}
-        return [
-            p for p in sorted(self.docs_dir.rglob("*"))
-            if p.is_file() and p.suffix.lower() in exts
-            and not any(part.startswith(".") for part in p.relative_to(self.docs_dir).parts)
-        ]
+        return list_documents(self.docs_dir)
 
     def update(self) -> dict[str, int]:
         with self._lock:
@@ -131,7 +174,7 @@ class DocIndex:
 
     def save(self) -> None:
         self.index_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"model": self.embed_model, "files": self.files}
+        payload = {"model": self.embed_model, "format": INDEX_FORMAT, "files": self.files}
         self.index_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
     def search(self, query: str, top_k: int = 5) -> list[tuple[float, str, str]]:

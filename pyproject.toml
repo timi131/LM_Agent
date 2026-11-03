@@ -6,19 +6,24 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "ddgs>=9.16.1",
+    "duckdb>=1.5.6",
     "fastapi>=0.162.0",
+    "faster-whisper>=1.2.1",
     "ollama>=0.4",
+    "openpyxl>=3.1.5",
     "playwright>=1.64.1",
     "pypdf>=6.21.4",
     "python-docx>=1.2.0",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
+    "socksio>=1.0.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
 lm-agent = "lm_agent.cli:main"
 lm-agent-web = "lm_agent.web.server:main"
+lm-agent-bot = "lm_agent.telegram:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

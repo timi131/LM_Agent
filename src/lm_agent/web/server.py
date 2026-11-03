@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextvars
 import os
 import threading
 import uuid
@@ -24,9 +23,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ..agent import Agent, ToolEvent
+from .. import telegram
+from ..agent import Agent
 from ..config import Settings
-from ..toolkits import ALL, build_registry, make_browser
+from ..hub import Busy, Collector, Hub, error_text
+from ..scheduler import Scheduler, register_tools
+from ..toolkits import ALL
 
 STATIC = Path(__file__).parent / "static"
 APPROVAL_TIMEOUT = 300
@@ -73,24 +75,6 @@ class Channel:
             event.set()  # решение остаётся False — действие отклоняется
 
 
-class Collector:
-    """Канал для HTTP API: собирает вызовы инструментов, подтверждения — по настройке."""
-
-    def __init__(self, auto_approve: bool) -> None:
-        self.auto_approve = auto_approve
-        self.events: list[dict] = []
-
-    def send(self, payload: dict) -> None:
-        if payload.get("type") != "delta":  # кусочки текста в HTTP-ответ не нужны — там итог целиком
-            self.events.append(payload)
-
-    def approve(self, name: str, arguments: dict) -> bool:
-        return self.auto_approve
-
-
-_channel: contextvars.ContextVar[Channel | Collector | None] = contextvars.ContextVar("channel", default=None)
-
-
 def _same_origin(headers: Any) -> bool:
     """Защита от запросов с чужих сайтов, открытых в том же браузере."""
     origin = headers.get("origin")
@@ -113,14 +97,6 @@ def _history(agent: Agent) -> list[dict]:
     return out
 
 
-def _error_text(e: Exception, settings: Settings) -> str:
-    if isinstance(e, ollama.ResponseError):
-        return f"Ошибка Ollama: {e.error}. Модель скачана? ollama pull {settings.model}"
-    if isinstance(e, ConnectionError):
-        return f"Нет связи с Ollama по адресу {settings.host}. Запущен ли ollama serve?"
-    return f"{type(e).__name__}: {e}"
-
-
 class ChatRequest(BaseModel):
     message: str
     session: str = "api"
@@ -130,55 +106,43 @@ class Fact(BaseModel):
     fact: str
 
 
-def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL, client: Any = None) -> FastAPI:
+class TaskIn(BaseModel):
+    when: str
+    prompt: str
+    name: str = ""
+
+
+class TaskPatch(BaseModel):
+    enabled: bool
+
+
+def create_app(
+    settings: Settings | None = None, toolkits: tuple[str, ...] = ALL, client: Any = None,
+    background: bool = True,
+) -> FastAPI:
+    """background=False — без прогрева, планировщика и Telegram (для тестов)."""
     settings = settings or Settings.from_env()
-    client = client or ollama.Client(host=settings.host)
     token = os.getenv("LM_AGENT_WEB_TOKEN", "")
-
-    def approver(name: str, arguments: dict) -> bool:
-        if settings.auto_approve:
-            return True
-        channel = _channel.get()
-        return channel.approve(name, arguments) if channel else False
-
-    def on_tool(event: ToolEvent) -> None:
-        channel = _channel.get()
-        if channel:
-            channel.send({"type": "tool", "name": event.name, "arguments": event.arguments, "result": event.result})
-
-    def on_token(text: str) -> None:
-        channel = _channel.get()
-        if channel:
-            channel.send({"type": "delta", "text": text})
-
-    browser = make_browser(settings) if "browser" in toolkits else None
-    registry, memory = build_registry(settings, client, approver, toolkits, browser_instance=browser)
-    sessions: dict[str, Agent] = {}
-    locks: dict[str, asyncio.Lock] = {}
-
-    def session(session_id: str) -> tuple[Agent, asyncio.Lock]:
-        if session_id not in sessions:
-            sessions[session_id] = Agent(
-                client=client, tools=registry, settings=settings, on_tool=on_tool, on_token=on_token,
-                context=memory.as_prompt if memory else None,
-            )
-            locks[session_id] = asyncio.Lock()
-        return sessions[session_id], locks[session_id]
-
-    def warmup() -> None:
-        try:
-            session("_warmup")[0].warmup()
-        except Exception:  # noqa: BLE001 — Ollama может быть ещё не запущен; это не ошибка сервера
-            pass
-        sessions.pop("_warmup", None)
-        locks.pop("_warmup", None)
+    hub = Hub(settings, toolkits, client)
+    registry, memory, browser = hub.registry, hub.memory, hub.browser
+    scheduler = Scheduler(hub, settings.data_dir / "schedule.json")
+    register_tools(scheduler)
+    bot = telegram.from_env(hub, scheduler) if background else None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        threading.Thread(target=warmup, daemon=True, name="lm-agent-warmup").start()
+        if background:
+            threading.Thread(target=hub.warmup, daemon=True, name="lm-agent-warmup").start()
+            scheduler.start()
+            if bot:
+                bot.start()
         yield
+        scheduler.stop()
+        if bot:
+            bot.stop()
 
     app = FastAPI(title="LM Agent", docs_url="/api/docs-ui", redoc_url=None, lifespan=lifespan)
+    app.state.hub, app.state.scheduler, app.state.bot = hub, scheduler, bot
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -208,27 +172,61 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
             "memory": memory is not None,
             "docs": "docs" in toolkits,
             "browser": browser is not None,
+            "telegram": bool(bot),
         }
 
     @app.post("/api/chat")
     async def chat(req: ChatRequest):
-        agent, lock = session(req.session)
-        if lock.locked():
-            raise HTTPException(409, "Агент ещё отвечает в этой сессии")
-        async with lock:
-            collector = Collector(settings.auto_approve)
-            _channel.set(collector)
-            try:
-                answer = await asyncio.to_thread(agent.ask, req.message)
-            except Exception as e:  # noqa: BLE001
-                raise HTTPException(502, _error_text(e, settings)) from e
+        collector = Collector(settings.auto_approve)
+        try:
+            answer = await asyncio.to_thread(hub.ask, req.session, req.message, collector)
+        except Busy as e:
+            raise HTTPException(409, str(e)) from e
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, error_text(e, settings)) from e
         return {"answer": answer, "tools": collector.events}
 
     @app.post("/api/sessions/{session_id}/reset")
     def reset(session_id: str):
-        if session_id in sessions:
-            sessions[session_id].reset()
+        hub.reset(session_id)
         return {"ok": True}
+
+    # --- расписание ---
+
+    def task_view(t: dict) -> dict:
+        return {k: t.get(k) for k in ("id", "name", "when", "cron", "prompt", "enabled", "next_run", "last_run", "history", "chat_id")}
+
+    @app.get("/api/schedule")
+    def list_tasks():
+        return [task_view(t) for t in scheduler.tasks]
+
+    @app.post("/api/schedule")
+    def add_task(task: TaskIn):
+        try:
+            return task_view(scheduler.add(task.when, task.prompt, task.name))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.patch("/api/schedule/{task_id}")
+    def patch_task(task_id: str, patch: TaskPatch):
+        try:
+            return task_view(scheduler.set_enabled(task_id, patch.enabled))
+        except KeyError as e:
+            raise HTTPException(404, "Задача не найдена") from e
+
+    @app.delete("/api/schedule/{task_id}")
+    def delete_task(task_id: str):
+        if not scheduler.remove(task_id):
+            raise HTTPException(404, "Задача не найдена")
+        return {"ok": True}
+
+    @app.post("/api/schedule/{task_id}/run")
+    async def run_task(task_id: str):
+        task = scheduler.get(task_id)
+        if task is None:
+            raise HTTPException(404, "Задача не найдена")
+        text = await asyncio.to_thread(scheduler.run_task, task)
+        return {"text": text, "task": task_view(task)}
 
     # --- память ---
 
@@ -337,7 +335,7 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
                 try:
                     await asyncio.to_thread(browser.user_action, kind, **ev)
                 except Exception as e:  # noqa: BLE001
-                    await ws.send_json({"type": "error", "text": _error_text(e, settings)})
+                    await ws.send_json({"type": "error", "text": error_text(e, settings)})
         except WebSocketDisconnect:
             pass
         finally:
@@ -352,22 +350,21 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
             await ws.close(code=1008)
             return
         await ws.accept()
-        agent, lock = session(ws.query_params.get("session") or uuid.uuid4().hex)
+        session_id = ws.query_params.get("session") or uuid.uuid4().hex
+        agent = hub.agent(session_id)
         channel = Channel(ws, asyncio.get_running_loop())
-        await ws.send_json({"type": "history", "messages": _history(agent), "busy": lock.locked()})
+        await ws.send_json({"type": "history", "messages": _history(agent), "busy": hub.busy(session_id)})
 
         async def run(text: str) -> None:
-            async with lock:
-                _channel.set(channel)
-                await ws.send_json({"type": "busy", "value": True})
-                try:
-                    answer = await asyncio.to_thread(agent.ask, text)
-                    payload = {"type": "answer", "text": answer}
-                except Exception as e:  # noqa: BLE001
-                    payload = {"type": "error", "text": _error_text(e, settings)}
-                if not channel.closed:
-                    await ws.send_json(payload)
-                    await ws.send_json({"type": "busy", "value": False})
+            await ws.send_json({"type": "busy", "value": True})
+            try:
+                answer = await asyncio.to_thread(hub.ask, session_id, text, channel)
+                payload = {"type": "answer", "text": answer}
+            except Exception as e:  # noqa: BLE001
+                payload = {"type": "error", "text": error_text(e, settings)}
+            if not channel.closed:
+                await ws.send_json(payload)
+                await ws.send_json({"type": "busy", "value": False})
 
         tasks: set[asyncio.Task] = set()
         try:
@@ -380,17 +377,17 @@ def create_app(settings: Settings | None = None, toolkits: tuple[str, ...] = ALL
                     text = str(data.get("text", "")).strip()
                     if not text:
                         continue
-                    if lock.locked():
+                    if hub.busy(session_id):
                         await ws.send_json({"type": "error", "text": "Агент ещё отвечает — дождитесь ответа"})
                         continue
                     task = asyncio.create_task(run(text))
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)
                 elif kind == "reset":
-                    if lock.locked():
+                    if hub.busy(session_id):
                         await ws.send_json({"type": "error", "text": "Нельзя очистить чат, пока агент отвечает"})
                         continue
-                    agent.reset()
+                    hub.reset(session_id)
                     await ws.send_json({"type": "history", "messages": [], "busy": False})
         except WebSocketDisconnect:
             pass

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -12,6 +13,17 @@ from .tools import ToolRegistry
 class ChatClient(Protocol):
     def chat(self, *, model: str, messages: list[dict], tools: list[dict], options: dict) -> Any: ...
 
+
+# Защита от зацикливания: тот же вызов с теми же аргументами.
+MAX_REPEATS = 2
+LOOP_WARNING = (
+    "\n⚠️ Ты уже делал ровно этот вызов. Повторять его бессмысленно: измени аргументы "
+    "(например, исправь запрос) или дай пользователю ответ по тому, что уже известно."
+)
+LOOP_STOP = (
+    "Не выполнено: этот вызов с теми же аргументами уже был несколько раз. "
+    "Смени подход или ответь пользователю по тому, что уже известно."
+)
 
 # Результаты этих инструментов — снимки состояния (страницы браузера). Актуален только последний,
 # старые занимают контекст, поэтому их сокращаем.
@@ -59,6 +71,7 @@ class Agent:
         self.messages.append({"role": "user", "content": prompt})
         options = {"temperature": self.settings.temperature, "num_ctx": self.settings.num_ctx, **self.settings.options}
 
+        repeats: dict[str, int] = {}
         for _ in range(self.settings.max_steps):
             self._compact_snapshots()
             request = dict(model=self.settings.model, messages=self.messages, tools=self.tools.schemas(), options=options)
@@ -73,7 +86,15 @@ class Agent:
             for call in tool_calls:
                 fn = call.get("function", {})
                 name, args = fn.get("name", ""), fn.get("arguments") or {}
-                result = self.tools.call(name, args)
+                key = name + json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)
+                repeats[key] = repeats.get(key, 0) + 1
+                if repeats[key] > MAX_REPEATS:
+                    # маленькие модели любят повторять один и тот же неудачный вызов до упора
+                    result = LOOP_STOP
+                else:
+                    result = self.tools.call(name, args)
+                    if repeats[key] == MAX_REPEATS:
+                        result += LOOP_WARNING
                 if self.on_tool:
                     self.on_tool(ToolEvent(name, args if isinstance(args, dict) else {"raw": args}, result))
                 self.messages.append({"role": "tool", "content": result, "tool_name": name})

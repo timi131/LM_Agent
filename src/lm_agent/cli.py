@@ -12,7 +12,7 @@ import ollama
 
 from .agent import Agent, ToolEvent
 from .config import Settings
-from .toolkits import ALL, build_registry
+from .toolkits import ALL, build_registry, make_context
 
 HELP = "Команды: /reset — очистить историю, /tools — инструменты, /memory — память, /exit — выход"
 
@@ -70,7 +70,7 @@ def build_agent(settings: Settings, verbose: bool = True, toolkits: tuple[str, .
 
     return Agent(
         client=client, tools=registry, settings=settings, on_tool=show, on_token=token,
-        context=memory.as_prompt if memory else None,
+        context=make_context(settings, memory, toolkits),
     )
 
 

@@ -265,6 +265,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   .brand-name, .badge { display: none; }
   .actions .long { display: none; }
   .actions .short { display: inline; }
+  .actions button { font-size: 12px; padding: 6px 5px; }
   .actions { gap: 2px; }
   .actions button { padding: 6px 7px; font-size: 14px; }
   .bubble { max-width: 92%; }
@@ -282,7 +283,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   font-weight: 500; font-size: 14px; white-space: nowrap; color: rgba(255, 255, 255, .9);
   padding-left: 10px; border-left: 1px solid rgba(255, 255, 255, .35); line-height: 22px;
 }
-@media (max-width: 860px) { .badge { display: none; } }
+.brand { flex: none; }
+@media (max-width: 860px) {
+  .badge, .brand-name { display: none; }
+  .actions .long { display: none; }
+  .actions .short { display: inline; }
+}
 .logo {
   border-radius: 4px;
   background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='11' cy='14' r='3' fill='%23c1232f'/%3E%3Ccircle cx='21' cy='14' r='3' fill='%23c1232f'/%3E%3Crect x='10' y='21' width='12' height='2.5' rx='1.25' fill='%23c1232f'/%3E%3C/svg%3E") center/contain no-repeat;
@@ -351,3 +357,34 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline-colo
   .empty { padding: 28px 22px; }
   .empty h1 { font-size: 28px; }
 }
+
+/* --- задачи по расписанию --- */
+.task-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.task-form .row { margin: 0; }
+.task-form input, .task-form textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); resize: vertical;
+}
+.when-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset { font-size: 12px; padding: 3px 9px; border: 1px solid var(--border); background: var(--surface); }
+.preset:hover { border-color: var(--accent); color: var(--accent); }
+.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.task {
+  border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--surface);
+}
+.task.off { opacity: .6; }
+.task-head { display: flex; gap: 8px; align-items: flex-start; }
+.task-title { flex: 1; min-width: 0; }
+.task-title b { display: block; overflow-wrap: anywhere; }
+.task-when { font-size: 12px; color: var(--accent); font-weight: 600; }
+.task-next { font-size: 12px; color: var(--muted); }
+.task-prompt { font-size: 13px; color: var(--muted); margin: 6px 0; overflow-wrap: anywhere; }
+.task-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.task-actions button { font-size: 12px; padding: 4px 9px; border: 1px solid var(--border); background: var(--surface); }
+.task-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.task-actions label { font-size: 12px; display: flex; gap: 4px; align-items: center; margin-left: auto; cursor: pointer; }
+.task details { margin-top: 8px; font-size: 13px; }
+.task summary { cursor: pointer; color: var(--muted); }
+.task .result { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border-radius: 4px; padding: 8px; margin-top: 6px; max-height: 260px; overflow: auto; }
+.task .result.bad { color: var(--bad); }
+.task .del { border: none; color: var(--muted); padding: 0 4px; }
+.task .del:hover { color: var(--bad); }

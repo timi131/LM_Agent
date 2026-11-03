@@ -63,3 +63,12 @@ def test_reset_keeps_system_prompt(tmp_path):
 def test_context_goes_into_system_prompt(tmp_path):
     agent = make_agent([], tmp_path, context=lambda: "Пользователь любит краткость")
     assert agent.messages[0]["content"].endswith("Пользователь любит краткость")
+
+
+def test_repeated_identical_call_is_stopped(tmp_path):
+    same = tool_call("calculate", expression="1/0")
+    agent = make_agent([same, same, same, answer("Сдаюсь")], tmp_path)
+    assert agent.ask("посчитай") == "Сдаюсь"
+    results = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    assert "Ошибка" in results[0] and "уже делал ровно этот вызов" in results[1]
+    assert results[2].startswith("Не выполнено")

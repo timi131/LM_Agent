@@ -332,6 +332,7 @@ function openDrawer(tab) {
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   document.querySelectorAll(".panel").forEach((p) => { p.hidden = p.dataset.panel !== tab; });
   if (tab === "memory") loadMemory();
+  else if (tab === "tasks") loadTasks();
   else loadDocs();
 }
 function closeDrawer() {
@@ -340,6 +341,7 @@ function closeDrawer() {
 }
 $("#btn-memory").addEventListener("click", () => openDrawer("memory"));
 $("#btn-docs").addEventListener("click", () => openDrawer("docs"));
+$("#btn-tasks").addEventListener("click", () => openDrawer("tasks"));
 $("#drawer-close").addEventListener("click", closeDrawer);
 els.scrim.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !els.drawer.hidden) closeDrawer(); });
@@ -447,6 +449,120 @@ $("#doc-files").addEventListener("change", (e) => { upload(e.target.files); e.ta
 ["dragleave", "drop"].forEach((t) => dropzone.addEventListener(t, () => dropzone.classList.remove("over")));
 dropzone.addEventListener("drop", (e) => { e.preventDefault(); upload(e.dataTransfer.files); });
 $("#reindex").addEventListener("click", reindex);
+
+// --- задачи по расписанию ---
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const today = new Date();
+  const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === today.toDateString()) return `сегодня ${time}`;
+  const tomorrow = new Date(today.getTime() + 864e5);
+  if (d.toDateString() === tomorrow.toDateString()) return `завтра ${time}`;
+  return `${d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })} ${time}`;
+}
+
+function taskCard(t) {
+  const li = document.createElement("li");
+  li.className = "task" + (t.enabled ? "" : " off");
+  const head = document.createElement("div");
+  head.className = "task-head";
+  const title = document.createElement("div");
+  title.className = "task-title";
+  const name = document.createElement("b");
+  name.textContent = t.name;
+  const when = document.createElement("div");
+  when.className = "task-when";
+  when.textContent = t.when + (t.chat_id ? " · в Telegram" : "");
+  const next = document.createElement("div");
+  next.className = "task-next";
+  next.textContent = t.enabled ? `Следующий запуск: ${fmtTime(t.next_run)}` : "Выключена";
+  title.append(name, when, next);
+  const del = document.createElement("button");
+  del.className = "del";
+  del.title = "Удалить задачу";
+  del.textContent = "✕";
+  del.onclick = async () => {
+    if (!confirm(`Удалить задачу «${t.name}»?`)) return;
+    await api(`/api/schedule/${t.id}`, { method: "DELETE" });
+    loadTasks();
+  };
+  head.append(title, del);
+
+  const prompt = document.createElement("div");
+  prompt.className = "task-prompt";
+  prompt.textContent = t.prompt;
+
+  const actions = document.createElement("div");
+  actions.className = "task-actions";
+  const run = document.createElement("button");
+  run.textContent = "▶ Запустить сейчас";
+  run.onclick = async () => {
+    run.disabled = true;
+    run.textContent = "Выполняется…";
+    try { await api(`/api/schedule/${t.id}/run`, { method: "POST" }); }
+    catch (e) { alert(e.message); }
+    loadTasks();
+  };
+  const toggle = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = t.enabled;
+  box.onchange = async () => { await api(`/api/schedule/${t.id}`, { method: "PATCH", json: { enabled: box.checked } }); loadTasks(); };
+  toggle.append(box, document.createTextNode("включена"));
+  actions.append(run, toggle);
+  li.append(head, prompt, actions);
+
+  if (t.history && t.history.length) {
+    const last = t.history[0];
+    const det = document.createElement("details");
+    const sum = document.createElement("summary");
+    sum.textContent = `${last.ok ? "✓" : "✕"} Последний результат · ${fmtTime(last.at)}`;
+    const body = document.createElement("div");
+    body.className = "result" + (last.ok ? "" : " bad");
+    body.textContent = last.text;
+    det.append(sum, body);
+    if (last.tools && last.tools.length) {
+      const used = document.createElement("div");
+      used.className = "task-next";
+      used.textContent = "Инструменты: " + last.tools.map((x) => x.name).join(", ");
+      used.title = last.tools.map((x) => `${x.name} ${JSON.stringify(x.arguments)}`).join("\n");
+      det.append(used);
+    }
+    li.append(det);
+  }
+  return li;
+}
+
+let tasksTimer = 0;
+async function loadTasks() {
+  const list = $("#task-list");
+  clearTimeout(tasksTimer);
+  try {
+    const tasks = await api("/api/schedule");
+    list.replaceChildren(...(tasks.length ? tasks.map(taskCard) : [emptyItem("Задач пока нет")]));
+  } catch (e) {
+    list.replaceChildren(emptyItem(e.message));
+  }
+  // пока панель открыта — обновляем: задача могла выполниться
+  if (!els.drawer.hidden && !$('[data-panel="tasks"]').hidden) tasksTimer = setTimeout(loadTasks, 30000);
+}
+
+document.querySelectorAll(".preset").forEach((b) => b.addEventListener("click", () => { $("#task-when").value = b.dataset.when; }));
+$("#task-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#task-status");
+  try {
+    const t = await api("/api/schedule", { method: "POST", json: {
+      name: $("#task-name").value, when: $("#task-when").value, prompt: $("#task-prompt").value,
+    } });
+    status.textContent = `Поставлена: ${t.when}`;
+    $("#task-form").reset();
+    loadTasks();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
 
 // --- живая панель браузера агента ---
 const br = {
@@ -574,6 +690,7 @@ api("/api/info")
     $("#docs-dir").textContent = info.docs_dir;
     if (!info.memory) $("#btn-memory").hidden = true;
     if (!info.docs) $("#btn-docs").hidden = true;
+    $("#tg-note").textContent = info.telegram ? " — в веб-чате и в Telegram" : " — здесь, во вкладке «Задачи» (Telegram не подключён)";
     if (info.browser) {
       connectBrowser();
       if (store.get("lm-agent-browser-open") === "1") showBrowser(true);

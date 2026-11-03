@@ -42,7 +42,7 @@ def make(tmp_path):
             workspace=tmp_path / "ws", docs_dir=tmp_path / "docs", data_dir=tmp_path / "data",
             services_file=tmp_path / "services.json", file_roots=[tmp_path], **overrides,
         )
-        return TestClient(create_app(settings, client=FakeClient(responses)))
+        return TestClient(create_app(settings, client=FakeClient(responses), background=False))
 
     return factory
 
@@ -158,3 +158,16 @@ def test_live_browser_panel(make, tmp_path):
             if ev.get("title") == "нажато":
                 break
         assert ev["title"] == "нажато"
+
+
+def test_schedule_api(make):
+    client = make([answer("Итог: всё хорошо")])
+    bad = client.post("/api/schedule", json={"when": "когда-нибудь", "prompt": "x"})
+    assert bad.status_code == 400 and "не понял время" in bad.json()["detail"]
+    task = client.post("/api/schedule", json={"when": "будни 09:00", "prompt": "сводка", "name": "Утро"}).json()
+    assert task["when"] == "по будням в 09:00" and task["enabled"]
+    assert client.patch(f"/api/schedule/{task['id']}", json={"enabled": False}).json()["enabled"] is False
+    run = client.post(f"/api/schedule/{task['id']}/run").json()
+    assert run["text"].strip() == "Итог: всё хорошо" and run["task"]["history"][0]["ok"]
+    assert client.delete(f"/api/schedule/{task['id']}").status_code == 200
+    assert client.get("/api/schedule").json() == []

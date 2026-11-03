@@ -19,8 +19,9 @@
       <span class="status" id="status" title="Соединение с сервером"></span>
     </div>
     <nav class="actions">
-      <button class="ghost" id="btn-new" title="Очистить диалог (память сохранится)"><span class="long">Новый чат</span><span class="short">Новый</span></button>
+      <button class="ghost" id="btn-new" title="Очистить диалог (память сохранится)"><span class="long">Новый чат</span><span class="short" aria-label="Новый чат">＋</span></button>
       <button class="ghost" id="btn-browser" title="Показать, что агент делает в браузере">Браузер</button>
+      <button class="ghost" id="btn-tasks" title="Задачи по расписанию">Задачи</button>
       <button class="ghost" id="btn-memory">Память</button>
       <button class="ghost" id="btn-docs" title="Документы для поиска"><span class="long">Документы</span><span class="short">Файлы</span></button>
     </nav>
@@ -76,6 +77,7 @@
       <div class="tabs" role="tablist">
         <button role="tab" data-tab="memory">Память</button>
         <button role="tab" data-tab="docs">Документы</button>
+        <button role="tab" data-tab="tasks">Задачи</button>
       </div>
       <button class="ghost icon" id="drawer-close" title="Закрыть">✕</button>
     </div>
@@ -90,7 +92,7 @@
     </section>
 
     <section class="panel" data-panel="docs">
-      <p class="hint">По этим файлам агент ищет по смыслу. Подходят .md, .txt, .pdf, .docx, .html, .csv и код. Папка: <code id="docs-dir"></code></p>
+      <p class="hint">По этим файлам агент ищет по смыслу. Подходят .md, .txt, .pdf, .docx, .html, код, а также таблицы .csv и .xlsx — по ним агент умеет считать. Папка: <code id="docs-dir"></code></p>
       <label class="dropzone" id="dropzone">
         <input type="file" id="doc-files" multiple hidden>
         <span>Перетащите файлы сюда или <u>выберите</u></span>
@@ -100,6 +102,27 @@
         <span class="muted small" id="docs-status"></span>
       </div>
       <ul class="list" id="docs-list"></ul>
+    </section>
+    <section class="panel" data-panel="tasks">
+      <p class="hint">В заданное время агент выполнит запрос и пришлёт результат<span id="tg-note"></span>. Задачу можно поставить и словами в чате: «каждое утро в 9 присылай сводку по заявкам».</p>
+      <form class="task-form" id="task-form">
+        <input id="task-name" placeholder="Название, например «Утренняя сводка»">
+        <div class="row">
+          <input id="task-when" placeholder="Когда: будни 09:00" required>
+        </div>
+        <div class="when-presets">
+          <button type="button" class="preset" data-when="ежедневно 09:00">ежедневно 09:00</button>
+          <button type="button" class="preset" data-when="будни 09:00">будни 09:00</button>
+          <button type="button" class="preset" data-when="пн 10:00">пн 10:00</button>
+          <button type="button" class="preset" data-when="каждый час">каждый час</button>
+        </div>
+        <textarea id="task-prompt" rows="3" placeholder="Что сделать: «Сводка по заявкам из выгрузки: сколько за вчера, статусы, кто без ответственного»" required></textarea>
+        <div class="row">
+          <button class="primary small">Поставить задачу</button>
+          <span class="muted small" id="task-status"></span>
+        </div>
+      </form>
+      <ul class="tasks" id="task-list"></ul>
     </section>
   </aside>
   <div class="scrim" id="scrim" hidden></div>
