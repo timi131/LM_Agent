@@ -442,6 +442,9 @@ def create_app(
 
 def main(argv: list[str] | None = None) -> int:
     import uvicorn
+    from dotenv import load_dotenv
+
+    load_dotenv()  # до разбора аргументов: их значения по умолчанию берутся из .env
 
     parser = argparse.ArgumentParser(prog="lm-agent-web", description="Веб-чат LM Agent")
     parser.add_argument("--host", default=os.getenv("LM_AGENT_WEB_HOST", "127.0.0.1"))
@@ -449,9 +452,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-m", "--model", help="модель Ollama")
     parser.add_argument("-t", "--toolkits", default=os.getenv("LM_AGENT_TOOLKITS", ",".join(ALL)))
     parser.add_argument("-y", "--yes", action="store_true", help="не спрашивать подтверждений (опасно)")
+    parser.add_argument(
+        "--lan", action="store_true",
+        help="открыть доступ из локальной сети (то же, что --host 0.0.0.0); нужен LM_AGENT_WEB_TOKEN",
+    )
+    parser.add_argument(
+        "--https", action="store_true", default=os.getenv("LM_AGENT_WEB_HTTPS", "").lower() in ("1", "true", "yes"),
+        help="HTTPS с самоподписанным сертификатом — нужен для микрофона с других устройств",
+    )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
+    if args.lan:
+        args.host = "0.0.0.0"
     if "LM_AGENT_BROWSER_HEADLESS" not in os.environ:
         # в веб-чате браузер виден в живой панели — отдельное окно Chrome не нужно
         settings.browser_headless = True
@@ -464,13 +477,35 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"неизвестные наборы: {', '.join(sorted(unknown))}. Доступны: {', '.join(ALL)}")
 
-    if args.host not in ("127.0.0.1", "localhost", "::1") and not os.getenv("LM_AGENT_WEB_TOKEN"):
-        print(
-            f"⚠️  Сервер будет доступен по сети ({args.host}), а у агента есть shell и доступ к файлам.\n"
-            "   Задайте LM_AGENT_WEB_TOKEN или запускайте на 127.0.0.1."
+    local_only = args.host in ("127.0.0.1", "localhost", "::1")
+    if not local_only and not os.getenv("LM_AGENT_WEB_TOKEN"):
+        parser.error(
+            f"сервер будет доступен по сети ({args.host}), а у агента есть shell и доступ к файлам — "
+            "сначала задайте LM_AGENT_WEB_TOKEN в .env (сгенерировать: "
+            "python3 -c \"import secrets; print(secrets.token_urlsafe(16))\")"
         )
-    print(f"LM Agent · модель {settings.model} · откройте http://{args.host}:{args.port}")
-    uvicorn.run(create_app(settings, toolkits), host=args.host, port=args.port, log_level="warning")
+
+    ssl = {}
+    scheme = "https" if args.https else "http"
+    if args.https:
+        from .tls import ensure_certificate
+
+        cert, key = ensure_certificate(settings.data_dir / "tls")
+        ssl = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
+
+    print(f"LM Agent · модель {settings.model}")
+    print(f"  на этом компьютере:  {scheme}://127.0.0.1:{args.port}")
+    if not local_only:
+        from .tls import host_names, local_addresses
+
+        for addr in local_addresses() + [n for n in host_names() if n.endswith(".local")]:
+            print(f"  в локальной сети:    {scheme}://{addr}:{args.port}")
+        print("  Первый вход с другого устройства — по ссылке выше, затем введите токен из .env.")
+        if args.https:
+            print("  Браузер предупредит о непроверенном сертификате: это ваш сертификат — нажмите «Всё равно перейти».")
+        else:
+            print("  Микрофон по сети работает только с --https.")
+    uvicorn.run(create_app(settings, toolkits), host=args.host, port=args.port, log_level="warning", **ssl)
     return 0
 
 

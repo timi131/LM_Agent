@@ -404,3 +404,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline-colo
 @keyframes rec { 0%, 100% { box-shadow: 0 0 0 0 rgba(219, 51, 64, .45); } 50% { box-shadow: 0 0 0 7px rgba(219, 51, 64, 0); } }
 .composer button.mic.busy { color: var(--accent); cursor: progress; }
 .composer button.mic.busy .mic-icon { animation: blink 1s infinite; }
+
+/* --- экран входа по токену --- */
+.gate { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--brand); }
+.gate[hidden] { display: none; }
+.gate-card {
+  width: min(380px, 100%); background: var(--surface); border-radius: 8px; padding: 28px 24px;
+  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px; text-align: center;
+}
+.gate-logo { align-self: center; border-radius: 8px; }
+.gate-card h2 { margin: 0; font-size: 20px; }
+.gate-card p { margin: 0; color: var(--muted); font-size: 13px; }
+.gate-card input { padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); text-align: center; }
+.gate-card button { padding: 10px; }
+.gate-error { color: var(--bad); font-size: 13px; min-height: 1em; }

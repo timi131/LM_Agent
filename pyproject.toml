@@ -5,6 +5,7 @@ description = "Локальный LLM-агент с инструментами �
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "cryptography>=50.0.2",
     "ddgs>=9.16.1",
     "duckdb>=1.5.6",
     "fastapi>=0.162.0",

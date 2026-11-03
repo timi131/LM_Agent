@@ -131,6 +131,17 @@
   </aside>
   <div class="scrim" id="scrim" hidden></div>
 
+  <div class="gate" id="gate" hidden>
+    <form class="gate-card" id="gate-form">
+      <img class="gate-logo" src="/static/favicon.svg" alt="" width="44" height="44">
+      <h2>Вход в агента</h2>
+      <p>Введите токен доступа — это значение <code>LM_AGENT_WEB_TOKEN</code> из файла <code>.env</code> на компьютере, где запущен агент.</p>
+      <input id="gate-token" type="password" autocomplete="current-password" placeholder="Токен" required>
+      <button class="primary">Войти</button>
+      <div class="gate-error" id="gate-error" role="alert"></div>
+    </form>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

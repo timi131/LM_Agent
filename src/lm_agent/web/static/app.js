@@ -18,8 +18,32 @@ function newId() {
 }
 
 const params = new URLSearchParams(location.search);
-if (params.get("token")) store.set("lm-agent-token", params.get("token"));
+if (params.get("token")) {
+  store.set("lm-agent-token", params.get("token"));
+  history.replaceState(null, "", location.pathname);  // токен не должен оставаться в адресе и закладках
+}
 const token = store.get("lm-agent-token") || "";
+
+// --- вход по токену (когда агент открыт в локальной сети) ---
+let gateShown = false;
+function showGate(message = "") {
+  if (gateShown) return;
+  gateShown = true;
+  $("#gate").hidden = false;
+  $("#gate-error").textContent = message;
+  $("#gate-token").focus();
+}
+$("#gate-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const value = $("#gate-token").value.trim();
+  const resp = await fetch("/api/info", { headers: { "X-Token": value } }).catch(() => null);
+  if (resp && resp.ok) {
+    store.set("lm-agent-token", value);
+    location.reload();
+  } else {
+    $("#gate-error").textContent = resp ? "Неверный токен" : "Сервер не отвечает";
+  }
+});
 let sessionId = store.get("lm-agent-session") || newId();
 store.set("lm-agent-session", sessionId);
 
@@ -31,6 +55,7 @@ async function api(path, options = {}) {
     options.body = JSON.stringify(options.json);
   }
   const resp = await fetch(path, { ...options, headers });
+  if (resp.status === 401) showGate(token ? "Токен не подошёл — введите актуальный" : "");
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
   return data;
@@ -241,7 +266,8 @@ function connect() {
     els.status.title = "Подключено";
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
   };
-  ws.onclose = () => {
+  ws.onclose = (e) => {
+    if (e.code === 1008) { showGate(); return; }  // сервер отклонил: нет или неверный токен
     els.status.className = "status offline";
     els.status.title = "Нет соединения — переподключаюсь…";
     setBusy(false);
@@ -796,6 +822,6 @@ api("/api/info")
     }
     if (info.auto_approve) els.model.textContent += " · без подтверждений";
   })
-  .catch((e) => addMessage("error", `Сервер недоступен: ${e.message}`));
+  .catch((e) => { if (!gateShown) addMessage("error", `Сервер недоступен: ${e.message}`); });
 connect();
 els.input.focus();
