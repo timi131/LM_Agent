@@ -162,6 +162,33 @@ def test_chunk_text():
     assert chunks[0].startswith("Абзац 0") and "Абзац 19" in chunks[-1]
 
 
+def test_read_whole_document(tmp_path):
+    from docx import Document
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    word = Document()
+    word.add_paragraph("Срок договора — 12 месяцев")
+    word.save(docs_dir / "Договор.docx")
+    (docs_dir / "long.txt").write_text("а" * 6000 + "конец")
+    (docs_dir / "photo.png").write_bytes(b"\x89PNG")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("пароль")
+    reg = ToolRegistry()
+    docs.register(reg, docs.DocIndex(FakeEmbedClient(), "fake", docs_dir, tmp_path / "idx.json"))
+
+    assert "12 месяцев" in reg.call("read_document", {"file": "Договор.docx"})
+    assert "12 месяцев" in reg.call("read_document", {"file": "договор"})  # часть имени
+
+    first = reg.call("read_document", {"file": "long.txt"})
+    assert "часть 1 из 2" in first and "конец" not in first and "part=2" in first
+    assert reg.call("read_document", {"file": "long.txt", "part": 2}).endswith("конец")
+
+    for name in ("photo.png", "../secret.txt", str(outside)):
+        result = reg.call("read_document", {"file": name})
+        assert result.startswith("Ошибка") and "пароль" not in result
+
+
 def test_doc_search(tmp_path):
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir()

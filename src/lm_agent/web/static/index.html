@@ -44,7 +44,12 @@
     <div class="thinking" id="thinking" hidden><span></span><span></span><span></span> Агент думает…</div>
   </main>
 
+  <div class="attachments" id="attachments" hidden></div>
   <form class="composer" id="composer">
+    <button type="button" id="attach" class="attach" title="Прикрепить файл для анализа" aria-label="Прикрепить файл для анализа" hidden>
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" fill="currentColor"/></svg>
+    </button>
+    <input type="file" id="attach-input" multiple hidden accept=".pdf,.docx,.xlsx,.csv,.tsv,.md,.txt,.rst,.json,.jsonl,.html,.htm,.xml,.yaml,.yml,.toml,.ini,.sql,.py,.js,.ts,.sh">
     <textarea id="input" rows="1" placeholder="Напишите сообщение…" title="Enter — отправить, Shift+Enter — новая строка" autocomplete="off"></textarea>
     <button type="button" id="mic" class="mic" title="Голосовой ввод: нажмите и говорите" hidden>
       <svg class="mic-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>

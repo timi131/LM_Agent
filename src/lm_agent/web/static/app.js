@@ -218,11 +218,11 @@ function addApproval(ev) {
   allow.focus({ preventScroll: true });
 }
 
-// --- «Сохранить в базу»: вопрос и ответ можно поправить перед сохранением ---
+// --- «Сохранить в базу»: сообщение пользователя становится ответом статьи, а его предыдущее
+// сообщение — вопросом («нет, правильно так: …»). Перед сохранением оба можно поправить. ---
 let lastQuestion = "";
 
 function addSaveButton(wrap, question, answer) {
-  if (!question || !answer.trim() || answer.includes("⏹ Остановлено")) return;
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "save-kb ghost small";
@@ -321,7 +321,6 @@ function finishAnswer(text) {
     bubble.after(meta);
     sentAt = 0;
   }
-  if (bubble) addSaveButton(bubble.parentElement, lastQuestion, text);
 }
 
 let busy = false;
@@ -375,11 +374,14 @@ function handle(ev) {
     case "history":
       streaming = null;
       els.messages.replaceChildren();
+      lastQuestion = "";
       for (const m of ev.messages) {
         if (m.role === "tool") addTool(m.name, m.arguments, m.content);
         else addMessage(m.role, m.content);
-        if (m.role === "user") lastQuestion = m.content;
-        if (m.role === "assistant") addSaveButton(els.messages.lastElementChild, lastQuestion, m.content);
+        if (m.role === "user") {
+          addSaveButton(els.messages.lastElementChild, lastQuestion, m.content);
+          lastQuestion = m.content;
+        }
       }
       updateEmpty();
       setBusy(!!ev.busy);
@@ -420,10 +422,65 @@ function autosize() {
   els.input.style.height = Math.min(els.input.scrollHeight, 200) + "px";
 }
 
+// --- «＋»: файл загружается в документы, а сообщение называет его модели строкой «📎 Файл: имя» ---
+const attach = { btn: $("#attach"), input: $("#attach-input"), box: $("#attachments"), files: [], pending: 0 };
+
+function renderAttachments() {
+  attach.box.hidden = !attach.files.length && !attach.pending;
+  attach.box.replaceChildren(...attach.files.map((name) => {
+    const chip = document.createElement("span");
+    chip.className = "attachment";
+    chip.textContent = `📎 ${name}`;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.title = "Убрать из сообщения (файл останется в документах)";
+    del.textContent = "✕";
+    del.onclick = () => { attach.files = attach.files.filter((n) => n !== name); renderAttachments(); };
+    chip.append(del);
+    return chip;
+  }));
+  if (attach.pending) {
+    const note = document.createElement("span");
+    note.className = "attachment loading";
+    note.textContent = "Загружаю и индексирую…";
+    attach.box.append(note);
+  }
+  els.send.disabled = attach.pending > 0;
+}
+
+async function attachFiles(fileList) {
+  if (!fileList.length) return;
+  const form = new FormData();
+  for (const f of fileList) form.append("files", f);
+  attach.pending++;
+  renderAttachments();
+  try {
+    const { saved } = await api("/api/docs", { method: "POST", body: form });
+    await api("/api/docs/reindex", { method: "POST" });
+    attach.files = [...new Set([...attach.files, ...saved])];
+  } catch (e) {
+    addMessage("error", `Файл не загружен: ${e.message}`);
+  } finally {
+    attach.pending--;
+    renderAttachments();
+    els.input.focus();
+  }
+}
+
+attach.btn.addEventListener("click", () => attach.input.click());
+attach.input.addEventListener("change", (e) => { attachFiles(e.target.files); e.target.value = ""; });
+
 function submit(text) {
   text = text.trim();
-  if (!text || busy) return;
+  if ((!text && !attach.files.length) || busy || attach.pending) return;
+  if (attach.files.length) {
+    const lines = attach.files.map((name) => `📎 Файл: ${name}`).join("\n");
+    text = `${lines}\n\n${text || "Проанализируй этот файл и кратко расскажи, что в нём."}`;
+    attach.files = [];
+    renderAttachments();
+  }
   addMessage("user", text);
+  addSaveButton(els.messages.lastElementChild, lastQuestion, text);
   lastQuestion = text;
   sentAt = performance.now();
   send({ type: "message", text });
@@ -933,6 +990,7 @@ api("/api/info")
     }
     if (!info.memory) $("#btn-memory").hidden = true;
     if (!info.docs) $("#btn-docs").hidden = true;
+    attach.btn.hidden = !info.docs;
     document.body.classList.toggle("no-save", !info.docs);  // без поиска сохранять в базу незачем
     mic.btn.hidden = !info.voice;
     $("#tg-note").textContent = info.telegram ? " — в веб-чате и в Telegram" : " — здесь, во вкладке «Задачи» (Telegram не подключён)";
@@ -946,4 +1004,5 @@ api("/api/info")
   })
   .catch((e) => { if (!gateShown) addMessage("error", `Сервер недоступен: ${e.message}`); });
 connect();
+if (matchMedia("(max-width: 640px)").matches) els.input.placeholder = "Сообщение…";  // рядом три кнопки: длинная не влезает
 els.input.focus();

@@ -19,6 +19,7 @@ from ..tools import ToolRegistry
 
 TEXT_EXTS = {".md", ".txt", ".rst", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".jsonl", ".html", ".htm", ".xml", ".ini", ".sql", ".sh"}
 CHUNK = 1200
+READ_PART = 6000  # документ отдаётся модели частями: она читает ~165 токенов/с
 OVERLAP = 200
 BATCH = 32
 
@@ -364,6 +365,35 @@ def register(registry: ToolRegistry, index: DocIndex) -> None:
             return f"Документов нет. Положите файлы в {index.docs_dir.resolve()} или подключите базу знаний (LM_AGENT_KNOWLEDGE)"
         hits = index.search(query, max(1, min(int(top_k), 10)))
         return "\n\n".join(f"[{key} · релевантность {score:.2f}]\n{chunk}" for score, key, chunk in hits)
+
+    def find_document(name: str) -> Path | None:
+        items = index.candidates()
+        name = str(name).strip()
+        for key, path in items:
+            if name in (key, path.name):
+                return path
+        matches = [path for key, path in items if name.lower() in key.lower()]
+        return matches[0] if len(matches) == 1 else None
+
+    # Имя в реестре задано отдельно: функция модуля read_document не должна быть перекрыта.
+    @registry.register(name="read_document")
+    def read_whole_document(file: str, part: int = 1) -> str:
+        """Читает документ пользователя (PDF, Word, Excel, текст) целиком, по частям. Нужен, чтобы проанализировать или пересказать весь файл.
+
+        file: имя файла, например "договор.pdf"
+        part: номер части, начиная с 1
+        """
+        path = find_document(file)
+        if path is None:
+            names = ", ".join(key for key, _ in index.candidates()[:30]) or "нет"
+            return f"Ошибка: документ '{file}' не найден или его формат не поддерживается. Доступны: {names}"
+        text = read_document(path).strip()
+        if not text:
+            return f"В файле {path.name} не удалось найти текст."
+        total = max(1, -(-len(text) // READ_PART))
+        n = max(1, min(int(part), total))
+        more = f"\n…дальше: read_document(file, part={n + 1})" if n < total else ""
+        return f"{path.name}, часть {n} из {total}\n{text[(n - 1) * READ_PART : n * READ_PART]}{more}"
 
     @registry.register
     def index_documents() -> str:
