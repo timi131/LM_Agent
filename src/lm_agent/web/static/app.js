@@ -3,7 +3,7 @@
 const $ = (sel) => document.querySelector(sel);
 const els = {
   chat: $("#chat"), messages: $("#messages"), empty: $("#empty"), thinking: $("#thinking"),
-  form: $("#composer"), input: $("#input"), send: $("#send"), model: $("#model"), status: $("#status"),
+  form: $("#composer"), input: $("#input"), send: $("#send"), stop: $("#stop"), model: $("#model"), status: $("#status"),
   drawer: $("#drawer"), scrim: $("#scrim"),
 };
 
@@ -218,6 +218,69 @@ function addApproval(ev) {
   allow.focus({ preventScroll: true });
 }
 
+// --- «Сохранить в базу»: вопрос и ответ можно поправить перед сохранением ---
+let lastQuestion = "";
+
+function addSaveButton(wrap, question, answer) {
+  if (!question || !answer.trim() || answer.includes("⏹ Остановлено")) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "save-kb ghost small";
+  btn.textContent = "Сохранить в базу";
+  btn.onclick = () => btn.replaceWith(saveForm(question, answer));
+  wrap.append(btn);
+}
+
+function saveField(label, value, rows) {
+  const box = document.createElement("label");
+  box.textContent = label;
+  const area = document.createElement("textarea");
+  area.rows = rows;
+  area.value = value;
+  box.append(area);
+  return { box, area };
+}
+
+function saveForm(question, answer) {
+  const form = document.createElement("form");
+  form.className = "save-form";
+  const q = saveField("Вопрос", question, 2);
+  const a = saveField("Ответ", answer, 6);
+  const row = document.createElement("div");
+  row.className = "row";
+  const ok = document.createElement("button");
+  ok.className = "primary small";
+  ok.textContent = "Сохранить";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "ghost small";
+  cancel.textContent = "Отмена";
+  const status = document.createElement("span");
+  status.className = "muted small";
+  cancel.onclick = () => {
+    const wrap = form.parentElement;
+    form.remove();
+    addSaveButton(wrap, question, answer);
+  };
+  row.append(ok, cancel, status);
+  form.append(q.box, a.box, row);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    ok.disabled = true;
+    try {
+      await api("/api/knowledge", { method: "POST", json: { question: q.area.value, answer: a.area.value } });
+      const done = document.createElement("div");
+      done.className = "elapsed";
+      done.textContent = "✓ Сохранено в базу";
+      form.replaceWith(done);
+    } catch (err) {
+      status.textContent = err.message;
+      ok.disabled = false;
+    }
+  });
+  return form;
+}
+
 function setVerdict(card, kind, text) {
   const buttons = card.querySelector(".buttons");
   if (!buttons) return;
@@ -258,15 +321,23 @@ function finishAnswer(text) {
     bubble.after(meta);
     sentAt = 0;
   }
+  if (bubble) addSaveButton(bubble.parentElement, lastQuestion, text);
 }
 
 let busy = false;
 function setBusy(value) {
   busy = value;
   els.thinking.hidden = !value;
-  els.send.disabled = value;
+  els.send.hidden = value;
+  els.stop.hidden = !value;
+  els.stop.disabled = false;
   if (value) scrollDown();
 }
+
+els.stop.addEventListener("click", () => {
+  els.stop.disabled = true;  // кнопка снова станет доступна со следующим ответом
+  send({ type: "stop" });
+});
 
 // --- соединение ---
 let ws = null;
@@ -307,6 +378,8 @@ function handle(ev) {
       for (const m of ev.messages) {
         if (m.role === "tool") addTool(m.name, m.arguments, m.content);
         else addMessage(m.role, m.content);
+        if (m.role === "user") lastQuestion = m.content;
+        if (m.role === "assistant") addSaveButton(els.messages.lastElementChild, lastQuestion, m.content);
       }
       updateEmpty();
       setBusy(!!ev.busy);
@@ -351,6 +424,7 @@ function submit(text) {
   text = text.trim();
   if (!text || busy) return;
   addMessage("user", text);
+  lastQuestion = text;
   sentAt = performance.now();
   send({ type: "message", text });
   setBusy(true);
@@ -557,6 +631,23 @@ async function loadDocs() {
           loadDocs();
         }))
       : [emptyItem("Документов пока нет")]));
+  } catch (e) {
+    list.replaceChildren(emptyItem(e.message));
+  }
+  loadSaved();
+}
+
+async function loadSaved() {
+  const list = $("#saved-list");
+  try {
+    const items = await api("/api/knowledge");
+    list.replaceChildren(...(items.length
+      ? items.slice().reverse().map((a) => listItem(a.question, fmtTime(a.saved_at), async () => {
+          if (!confirm(`Удалить статью «${a.question}» из базы?`)) return;
+          await api(`/api/knowledge/${encodeURIComponent(a.id)}`, { method: "DELETE" });
+          loadSaved();
+        }))
+      : [emptyItem("Сохранённых статей пока нет")]));
   } catch (e) {
     list.replaceChildren(emptyItem(e.message));
   }
@@ -836,12 +927,13 @@ api("/api/info")
     $("#docs-dir").textContent = info.docs_dir;
     if (info.knowledge && info.knowledge.length) {
       const note = $("#kb-note");
-      note.textContent = "Также подключены базы знаний (только чтение): " +
+      note.textContent = "Также подключены базы знаний: " +
         info.knowledge.map((k) => `${k.path} — ${k.files} файл(ов)`).join("; ");
       note.hidden = false;
     }
     if (!info.memory) $("#btn-memory").hidden = true;
     if (!info.docs) $("#btn-docs").hidden = true;
+    document.body.classList.toggle("no-save", !info.docs);  // без поиска сохранять в базу незачем
     mic.btn.hidden = !info.voice;
     $("#tg-note").textContent = info.telegram ? " — в веб-чате и в Telegram" : " — здесь, во вкладке «Задачи» (Telegram не подключён)";
     if (info.browser) {

@@ -159,6 +159,13 @@ class Hub:
             current_channel.reset(token)
             lock.release()
 
+    def stop(self, session_id: str) -> bool:
+        """Просит остановить текущий ответ. Уже идущий инструмент (например, команда shell) доработает."""
+        if not self.busy(session_id):
+            return False
+        self.sessions[session_id].cancel.set()
+        return True
+
     def reset(self, session_id: str) -> None:
         if session_id in self.sessions and not self.busy(session_id):
             self.sessions[session_id].reset()

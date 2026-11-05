@@ -40,7 +40,8 @@ def make(tmp_path):
     def factory(responses=(), **overrides):
         settings = Settings(
             workspace=tmp_path / "ws", docs_dir=tmp_path / "docs", data_dir=tmp_path / "data",
-            services_file=tmp_path / "services.json", file_roots=[tmp_path], **overrides,
+            services_file=tmp_path / "services.json", file_roots=[tmp_path],
+            saved_knowledge=tmp_path / "kb" / "saved.jsonl", **overrides,
         )
         return TestClient(create_app(settings, client=FakeClient(responses), background=False))
 
@@ -101,6 +102,83 @@ def test_http_chat_denies_dangerous_by_default(make):
     assert data["answer"].strip() == "Не смог"
     assert all(e["type"] == "tool" for e in data["tools"])  # кусочки текста в HTTP-ответ не попадают
     assert data["tools"][0]["result"].startswith("Отклонено")
+
+
+def test_stop_releases_pending_approval(make):
+    client = make([tool_call("run_command", command="echo hi")])
+    with client.websocket_connect("/ws?session=stop-1") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "запусти"})
+        receive_until(ws, "approval")
+        ws.send_json({"type": "stop"})
+        events = receive_until(ws, "answer")
+        assert next(e for e in events if e["type"] == "tool")["result"].startswith("Отклонено")
+        assert events[-1]["text"] == "⏹ Остановлено"
+        assert receive_until(ws, "busy")[-1]["value"] is False
+
+
+def test_stop_after_reconnect_finishes_for_new_tab(make):
+    client = make([tool_call("run_command", command="echo hi"), answer("Не запускаю")])
+    with client.websocket_connect("/ws?session=stop-2") as first:
+        first.receive_json()
+        first.send_json({"type": "message", "text": "запусти"})
+        approval = receive_until(first, "approval")[-1]
+        with client.websocket_connect("/ws?session=stop-2") as second:
+            assert second.receive_json()["busy"] is True
+            second.send_json({"type": "stop"})
+            first.send_json({"type": "approve", "id": approval["id"], "allow": False})  # подтверждение ждёт первая вкладка
+            history = receive_until(second, "history")[-1]
+            assert history["busy"] is False and history["messages"][-1]["content"] == "⏹ Остановлено"
+
+
+def test_saved_articles_api(make, tmp_path):
+    client = make()
+    path = tmp_path / "kb" / "saved.jsonl"
+    assert client.get("/api/knowledge").json() == []
+    assert client.post("/api/knowledge", json={"question": " ", "answer": "x"}).status_code == 400
+    assert client.post("/api/knowledge", json={"question": "q", "answer": "x" * 10_001}).status_code == 413
+
+    first = client.post("/api/knowledge", json={"question": "Как оплатить?", "answer": "Строка 1\nСтрока 2"}).json()
+    client.post("/api/knowledge", json={"question": "Другой вопрос?", "answer": "Да"})
+    fixed = client.post("/api/knowledge", json={"question": "Как оплатить?", "answer": "Картой"}).json()
+    items = client.get("/api/knowledge").json()
+    assert [a["answer"] for a in items] == ["Да", "Картой"]  # тот же вопрос заменяет старую статью
+    assert first["id"] != fixed["id"]
+
+    from lm_agent.toolkits import docs
+
+    chunks = docs.document_chunks(path)  # файл разбирается по одной статье на запись
+    assert "Раздел: Сохранено из чата\nВопрос: Как оплатить?\nОтвет: Картой" in chunks and len(chunks) == 2
+
+    assert client.delete(f"/api/knowledge/{fixed['id']}").status_code == 200
+    assert client.delete(f"/api/knowledge/{fixed['id']}").status_code == 404
+    assert [a["question"] for a in client.get("/api/knowledge").json()] == ["Другой вопрос?"]
+
+
+def test_saved_article_found_by_agent(tmp_path):
+    settings = Settings(
+        workspace=tmp_path / "ws", docs_dir=tmp_path / "docs", data_dir=tmp_path / "data",
+        services_file=tmp_path / "services.json", saved_knowledge=tmp_path / "saved.jsonl",
+        knowledge=[tmp_path / "saved.jsonl"],
+    )
+
+    class Client(FakeClient):
+        def embed(self, model, input):
+            return {"embeddings": [[1.0, 0.0] for _ in input]}  # любой вопрос «похож» на любую статью
+
+    app_client = Client([answer("По статье")])
+    client = TestClient(create_app(settings, ("docs",), app_client, background=False))
+    client.post("/api/chat", json={"message": "до сохранения", "session": "a"})
+    assert not any("Статьи из базы" in m["content"] for m in client.app.state.hub.sessions["a"].messages)
+    client.post("/api/knowledge", json={"question": "Как оплатить?", "answer": "Картой"})
+    app_client.responses.append(answer("Картой"))
+    client.post("/api/chat", json={"message": "как платить", "session": "b"})
+    assert any("Ответ: Картой" in m["content"] for m in client.app.state.hub.sessions["b"].messages)
+
+
+def test_model_has_no_tool_to_write_saved_articles(make):
+    tools = make().get("/api/info").json()["tools"]
+    assert not [t for t in tools if "knowledge" in t or "article" in t]
 
 
 def test_cross_origin_blocked(make):

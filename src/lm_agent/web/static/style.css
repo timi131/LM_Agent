@@ -173,6 +173,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 
 .elapsed { color: var(--muted); font-size: 12px; margin: 4px 0 0 4px; }
 .msg.assistant { flex-direction: column; align-items: flex-start; }
+.composer button[hidden] { display: none; }
+.save-kb { color: var(--muted); margin: 4px 0 0; border-color: var(--border); }
+.no-save .save-kb { display: none; }
+.save-form {
+  width: 100%; max-width: 85%; margin-top: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.save-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.save-form textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; font-size: 14px; color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+@media (max-width: 640px) { .save-form { max-width: 100%; } }
 
 .tool {
   margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px;

@@ -53,6 +53,9 @@
     <button type="submit" id="send" class="primary" title="Отправить">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z" fill="currentColor"/></svg>
     </button>
+    <button type="button" id="stop" class="primary" title="Остановить ответ" aria-label="Остановить ответ" hidden>
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+    </button>
   </form>
   </div>
 
@@ -107,6 +110,8 @@
         <span class="muted small" id="docs-status"></span>
       </div>
       <ul class="list" id="docs-list"></ul>
+      <p class="hint">Статьи, сохранённые из чата кнопкой «Сохранить в базу». Агент находит их сам. Новая статья с тем же вопросом заменяет старую.</p>
+      <ul class="list" id="saved-list"></ul>
     </section>
     <section class="panel" data-panel="tasks">
       <p class="hint">В заданное время агент выполнит запрос и пришлёт результат<span id="tg-note"></span>. Задачу можно поставить и словами в чате: «каждое утро в 9 присылай сводку по заявкам».</p>

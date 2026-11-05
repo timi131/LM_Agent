@@ -55,6 +55,8 @@ class Settings:
     docs_dir: Path = Path("./docs")
     # Дополнительные базы знаний только для чтения: папки или файлы (через ":"), например ~/bot/knowledge.
     knowledge: list[Path] = field(default_factory=list)
+    # Статьи, сохранённые из чата кнопкой «Сохранить в базу». Входит в базу знаний автоматически.
+    saved_knowledge: Path = Path("./knowledge/saved.jsonl")
     # Служебные данные: память, индекс документов.
     data_dir: Path = field(default_factory=lambda: Path("~/.lm_agent").expanduser())
     services_file: Path = Path("./services.json")
@@ -84,6 +86,7 @@ class Settings:
             pass
         d = cls()
         env = os.getenv
+        saved = Path(env("LM_AGENT_SAVED_KNOWLEDGE", str(d.saved_knowledge))).expanduser()
         return cls(
             host=env("OLLAMA_HOST", d.host),
             model=env("LM_AGENT_MODEL", d.model),
@@ -91,7 +94,8 @@ class Settings:
             workspace=Path(env("LM_AGENT_WORKSPACE", str(d.workspace))).expanduser(),
             file_roots=_paths(env("LM_AGENT_FILE_ROOTS", "")) or d.file_roots,
             docs_dir=Path(env("LM_AGENT_DOCS", str(d.docs_dir))).expanduser(),
-            knowledge=_paths(env("LM_AGENT_KNOWLEDGE", "")),
+            knowledge=[*_paths(env("LM_AGENT_KNOWLEDGE", "")), saved],
+            saved_knowledge=saved,
             data_dir=Path(env("LM_AGENT_DATA", str(d.data_dir))).expanduser(),
             services_file=Path(env("LM_AGENT_SERVICES", str(d.services_file))).expanduser(),
             max_steps=int(env("LM_AGENT_MAX_STEPS", d.max_steps)),

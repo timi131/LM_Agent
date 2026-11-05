@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import queue
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -43,6 +45,9 @@ WAITING = re.compile(
 )
 MAX_NUDGES = 2
 NUDGE = "Продолжай: сделай это сейчас — вызови нужный инструмент, а не описывай словами."
+
+STOPPED = "⏹ Остановлено"
+STOPPED_CALL = "Остановлено пользователем: вызов не выполнен."
 
 KB_PREFIX = (
     "Статьи из базы знаний, найденные по вопросу пользователя. Если статья отвечает на вопрос — ответь по ней "
@@ -93,6 +98,8 @@ class Agent:
     retriever: Callable[[str], str] | None = None
     stop_reason: str = ""
     messages: list[dict] = field(default_factory=list)
+    # Просьба остановить текущий ответ: выставляется из другого потока (кнопка «Остановить»).
+    cancel: threading.Event = field(default_factory=threading.Event)
 
     def __post_init__(self) -> None:
         self.reset()
@@ -105,6 +112,7 @@ class Agent:
         self.messages = [{"role": "system", "content": system}]
 
     def ask(self, prompt: str) -> str:
+        self.cancel.clear()
         self._attach_knowledge(prompt)
         self.messages.append({"role": "user", "content": prompt})
         options = {"temperature": self.settings.temperature, "num_ctx": self.settings.num_ctx, **self.settings.options}
@@ -113,11 +121,15 @@ class Agent:
         nudges = 0
         self._log("user", text=prompt[:500])
         for step in range(self.settings.max_steps):
+            if self.cancel.is_set():
+                return self._stopped()
             self._compact_snapshots()
             request = dict(model=self.settings.model, messages=self.messages, tools=self.tools.schemas(), options=options)
             message = self._stream(request) if self.on_token else _as_dict(self.client.chat(**request)).get("message", {})
             content = message.get("content") or ""
             tool_calls = message.get("tool_calls") or []
+            if self.cancel.is_set():
+                return self._stopped(content)
 
             self.messages.append({"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})})
             if not tool_calls:
@@ -136,7 +148,9 @@ class Agent:
                 name, args = fn.get("name", ""), fn.get("arguments") or {}
                 key = name + json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)
                 repeats[key] = repeats.get(key, 0) + 1
-                if repeats[key] > MAX_REPEATS:
+                if self.cancel.is_set():
+                    result = STOPPED_CALL  # у каждого вызова в истории должен быть результат
+                elif repeats[key] > MAX_REPEATS:
                     # маленькие модели любят повторять один и тот же неудачный вызов до упора
                     result = LOOP_STOP
                 else:
@@ -151,6 +165,14 @@ class Agent:
         self.stop_reason = "step_limit"
         self._log("step_limit", steps=self.settings.max_steps)
         return f"Остановлено: превышен лимит шагов ({self.settings.max_steps}) без итогового ответа."
+
+    def _stopped(self, partial: str = "") -> str:
+        """Завершает ответ по просьбе пользователя: уже написанный текст остаётся в истории с пометкой."""
+        text = f"{partial.rstrip()}\n\n{STOPPED}" if partial.strip() else STOPPED
+        self.stop_reason = "stopped"
+        self._log("stopped", text=partial[:500])
+        self.messages.append({"role": "assistant", "content": text})
+        return text
 
     def _log(self, event: str, **data: Any) -> None:
         if self.log:
@@ -187,9 +209,37 @@ class Agent:
         )
 
     def _stream(self, request: dict) -> dict:
+        """Читает ответ модели в отдельном потоке: пока модель читает промпт, кусочков нет десятки секунд,
+        а остановка должна сработать сразу. Закрытие потока ответа прекращает генерацию в Ollama."""
+        chunks: queue.Queue = queue.Queue()
+
+        def pump() -> None:
+            stream = None
+            try:
+                stream = self.client.chat(**request, stream=True)
+                for chunk in stream:
+                    chunks.put(chunk)
+                    if self.cancel.is_set():
+                        break
+                chunks.put(None)
+            except Exception as e:  # noqa: BLE001 — ошибку разберёт тот, кто ждёт ответа
+                chunks.put(e)
+            finally:
+                if hasattr(stream, "close"):
+                    stream.close()
+
+        threading.Thread(target=pump, daemon=True, name="lm-agent-stream").start()
         content, tool_calls = [], []
-        for chunk in self.client.chat(**request, stream=True):
-            msg = _as_dict(chunk).get("message", {})
+        while not self.cancel.is_set():
+            try:
+                item = chunks.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            msg = _as_dict(item).get("message", {})
             if msg.get("content"):
                 content.append(msg["content"])
                 self.on_token(msg["content"])

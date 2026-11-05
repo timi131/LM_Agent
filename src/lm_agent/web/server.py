@@ -28,6 +28,7 @@ from .. import telegram
 from ..agent import KB_PREFIX, NUDGE, Agent
 from ..config import Settings
 from ..hub import Busy, Collector, Hub, error_text
+from ..saved import SavedArticles
 from ..scheduler import Scheduler, register_tools
 from ..toolkits import ALL
 from ..toolkits import docs as docs_kit
@@ -36,6 +37,7 @@ STATIC = Path(__file__).parent / "static"
 APPROVAL_TIMEOUT = 300
 UPLOAD_LIMIT = 50 * 1024 * 1024
 VOICE_LIMIT = 25 * 1024 * 1024
+ARTICLE_LIMIT = 10_000
 
 
 class Channel:
@@ -56,6 +58,8 @@ class Channel:
             self.closed = True
 
     def approve(self, name: str, arguments: dict) -> bool:
+        if self.closed:
+            return False  # вкладку закрыли: спросить некого, ждать ответа незачем
         request_id = uuid.uuid4().hex
         event, decision = threading.Event(), [False]
         self._pending[request_id] = (event, decision)
@@ -72,10 +76,13 @@ class Channel:
             item[1][0] = bool(allow)
             item[0].set()
 
-    def close(self) -> None:
-        self.closed = True
+    def release(self) -> None:
         for event, _ in list(self._pending.values()):
             event.set()  # решение остаётся False — действие отклоняется
+
+    def close(self) -> None:
+        self.closed = True
+        self.release()
 
 
 def _same_origin(headers: Any) -> bool:
@@ -107,6 +114,11 @@ class ChatRequest(BaseModel):
 
 class Fact(BaseModel):
     fact: str
+
+
+class ArticleIn(BaseModel):
+    question: str
+    answer: str
 
 
 class TaskIn(BaseModel):
@@ -309,6 +321,28 @@ def create_app(
             raise HTTPException(404, "Запись не найдена")
         return {"ok": True}
 
+    # --- статьи, сохранённые из чата ---
+
+    saved = SavedArticles(settings.saved_knowledge)
+
+    @app.get("/api/knowledge")
+    def list_articles():
+        return saved.items()
+
+    @app.post("/api/knowledge")
+    def add_article(article: ArticleIn):
+        if not article.question.strip() or not article.answer.strip():
+            raise HTTPException(400, "Нужны и вопрос, и ответ")
+        if len(article.question) + len(article.answer) > ARTICLE_LIMIT:
+            raise HTTPException(413, f"Статья длиннее {ARTICLE_LIMIT} символов")
+        return saved.add(article.question, article.answer)
+
+    @app.delete("/api/knowledge/{article_id}")
+    def delete_article(article_id: str):
+        if not saved.remove(article_id):
+            raise HTTPException(404, "Статья не найдена")
+        return {"ok": True}
+
     # --- документы ---
 
     docs_dir = settings.docs_dir
@@ -424,6 +458,12 @@ def create_app(
                 await ws.send_json(payload)
                 await ws.send_json({"type": "busy", "value": False})
 
+        async def after_stop() -> None:
+            while hub.busy(session_id):
+                await asyncio.sleep(0.2)
+            if not channel.closed:
+                await ws.send_json({"type": "history", "messages": _history(agent), "busy": False})
+
         tasks: set[asyncio.Task] = set()
         try:
             while True:
@@ -441,6 +481,13 @@ def create_app(
                     task = asyncio.create_task(run(text))
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)
+                elif kind == "stop":
+                    channel.release()  # если агент ждёт подтверждения — это отказ
+                    hub.stop(session_id)
+                    if not tasks:  # ответ начат до перезагрузки вкладки: сообщить о нём некому, кроме нас
+                        task = asyncio.create_task(after_stop())
+                        tasks.add(task)
+                        task.add_done_callback(tasks.discard)
                 elif kind == "reset":
                     if hub.busy(session_id):
                         await ws.send_json({"type": "error", "text": "Нельзя очистить чат, пока агент отвечает"})

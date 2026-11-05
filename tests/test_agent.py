@@ -141,6 +141,90 @@ def test_real_promises_are_detected():
         assert is_promise(text), text
 
 
+def test_stop_skips_tools_and_keeps_history_valid(tmp_path):
+    from lm_agent.agent import STOPPED, STOPPED_CALL
+
+    agent = make_agent([tool_call("calculate", expression="2+2")], tmp_path)
+    results = []
+    agent.on_tool = lambda ev: (results.append(ev.result), agent.cancel.set())
+    assert agent.ask("посчитай") == STOPPED  # после инструмента модель больше не вызывается
+    assert results == ["4"] and agent.stop_reason == "stopped"
+    assert [m["role"] for m in agent.messages][-2:] == ["tool", "assistant"]
+
+    agent = make_agent([{"message": {"content": "", "tool_calls": [
+        {"function": {"name": "calculate", "arguments": {"expression": "1+1"}}},
+        {"function": {"name": "calculate", "arguments": {"expression": "2+2"}}},
+    ]}}], tmp_path)
+    agent.on_tool = lambda ev: agent.cancel.set()
+    assert agent.ask("x") == STOPPED
+    tools = [m["content"] for m in agent.messages if m["role"] == "tool"]
+    assert tools == ["2", STOPPED_CALL]  # второй вызов не выполнен, но результат у него есть
+
+
+def test_stop_during_stream_keeps_partial_text(tmp_path):
+    import threading
+
+    from lm_agent.agent import STOPPED
+
+    closed = threading.Event()
+    agent = make_agent([], tmp_path)
+
+    def stream():
+        try:
+            yield {"message": {"content": "Начало "}}
+            while True:  # модель продолжала бы писать, пока её не остановят
+                yield {"message": {"content": "ещё "}}
+        finally:
+            closed.set()
+
+    agent.client.chat = lambda stream=False, **kw: stream_iter
+    stream_iter = stream()
+    agent.on_token = lambda text: agent.cancel.set()  # пользователь увидел первый кусок и нажал «Остановить»
+    assert agent.ask("x") == f"Начало\n\n{STOPPED}"
+    assert agent.messages[-1] == {"role": "assistant", "content": f"Начало\n\n{STOPPED}"}
+    assert closed.wait(2)  # соединение с моделью закрыто: она перестаёт генерировать
+
+    agent.on_token = lambda text: None
+    agent.client.chat = lambda stream=False, **kw: iter([{"message": {"content": "Новый ответ"}}])
+    assert agent.ask("y") == "Новый ответ"  # следующий вопрос работает как обычно
+
+
+def test_stop_before_first_token_does_not_wait_for_model(tmp_path):
+    import threading
+    import time
+
+    from lm_agent.agent import STOPPED
+
+    release = threading.Event()
+    agent = make_agent([], tmp_path)
+
+    def slow(stream=False, **kw):
+        release.wait(5)  # модель ещё читает промпт
+        return iter([])
+
+    agent.client.chat = slow
+    agent.on_token = lambda text: None
+    threading.Timer(0.1, agent.cancel.set).start()
+    started = time.time()
+    assert agent.ask("x") == STOPPED
+    assert time.time() - started < 2
+    release.set()
+
+
+def test_stream_errors_reach_the_caller(tmp_path):
+    import pytest
+
+    agent = make_agent([], tmp_path)
+
+    def broken(stream=False, **kw):
+        raise ConnectionError("нет Ollama")
+
+    agent.client.chat = broken
+    agent.on_token = lambda text: None
+    with pytest.raises(ConnectionError):
+        agent.ask("x")
+
+
 def test_knowledge_attached_before_question_and_replaced(tmp_path):
     from lm_agent.agent import KB_PREFIX
 
