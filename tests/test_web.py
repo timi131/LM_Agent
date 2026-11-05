@@ -202,3 +202,11 @@ def test_download_created_file(make, tmp_path):
     secret.write_text("пароль")
     assert client.get("/api/files/../secret.txt").status_code == 404
     assert client.get("/api/files/..%2F..%2Fsecret.txt").status_code == 404
+
+
+def test_agent_log_written(make, tmp_path):
+    client = make([tool_call("calculate", expression="2+2"), answer("4")])
+    client.post("/api/chat", json={"message": "сколько 2+2", "session": "s-log"})
+    events = client.app.state.hub.log.tail()
+    assert [e["event"] for e in events] == ["user", "tool", "answer"]
+    assert events[1]["name"] == "calculate" and events[1]["result"] == "4" and events[0]["session"] == "s-log"

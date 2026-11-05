@@ -80,14 +80,18 @@ SNAPSHOT_JS = r"""
     if ((tag === 'button' || (tag === 'input' && ['submit', 'image'].includes(type))) && el.form && el.type === 'submit') item.submit = true;
     out.push(item);
   }
-  // текст только видимой части страницы
+  // текст только видимой части страницы — из основного содержимого, без меню, шапки и подвала
+  // (иначе на сайтах вроде Википедии весь лимит съедают навигация и список языков)
   const parts = [];
   let total = 0;
-  const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+  const SKIP = 'nav, header, footer, aside, [role=navigation], [role=banner], [role=contentinfo], [role=complementary], [role=search]';
+  const root = document.querySelector('main, [role=main], article, #content') || document.body || document.documentElement;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   while (walker.nextNode() && total < MAX_TEXT) {
     const node = walker.currentNode, p = node.parentElement;
     const t = clean(node.textContent);
     if (!t || !p || ['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(p.tagName)) continue;
+    if (p.closest(SKIP) && root !== document.body) continue;
     const r = p.getBoundingClientRect();
     if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > innerHeight) continue;
     parts.push(t);
@@ -496,7 +500,15 @@ def register(registry: ToolRegistry, browser: Browser, confirm_mode: str = "risk
 
         def action(page):
             loc = browser._locator(page, ref)
-            loc.fill(text, timeout=10_000)
+            try:
+                loc.fill(text, timeout=10_000)
+            except Exception as e:  # noqa: BLE001 — объясняем модели, что не так, вместо ошибки Playwright
+                kind = (item or {}).get("role", "элемент")
+                raise ValueError(
+                    f"в [{ref}] нельзя ввести текст — это {kind}, а не поле ввода. Найди в снимке поле "
+                    "(text, search, searchbox, textarea, combobox) и введи текст туда; если поля не видно — "
+                    "сначала нажми на кнопку поиска и посмотри новый снимок"
+                ) from e
             if submit:
                 loc.press("Enter")
 

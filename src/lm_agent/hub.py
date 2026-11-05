@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 import contextvars
+import json
 import threading
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 import ollama
@@ -57,6 +60,32 @@ def error_text(e: Exception, settings: Settings) -> str:
     return f"{type(e).__name__}: {e}"
 
 
+class EventLog:
+    """Журнал агента: одна строка JSON на событие. При 5 МБ файл сдвигается в agent.log.1."""
+
+    MAX_BYTES = 5 * 1024 * 1024
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+
+    def write(self, session: str, event: str, data: dict) -> None:
+        line = json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "session": session, "event": event, **data},
+                          ensure_ascii=False, default=str)
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if self.path.exists() and self.path.stat().st_size > self.MAX_BYTES:
+                self.path.replace(self.path.with_suffix(".log.1"))
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+    def tail(self, n: int = 50) -> list[dict]:
+        if not self.path.exists():
+            return []
+        lines = self.path.read_text(encoding="utf-8").splitlines()[-n:]
+        return [json.loads(l) for l in lines if l.strip()]
+
+
 class Hub:
     def __init__(self, settings: Settings, toolkits: tuple[str, ...] = ALL, client: Any = None) -> None:
         self.settings = settings
@@ -68,6 +97,7 @@ class Hub:
         )
         # распознавание речи — одно на веб-чат и Telegram (модель в памяти одна)
         self.transcriber = make_transcriber(settings)
+        self.log = EventLog(settings.data_dir / "logs" / "agent.log")
         self.sessions: dict[str, Agent] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
@@ -101,6 +131,8 @@ class Hub:
                     client=self.client, tools=self.registry, settings=self.settings,
                     on_tool=self._on_tool, on_token=self._on_token,
                     context=make_context(self.settings, self.memory, self.toolkits),
+                    log=lambda event, data, sid=session_id: self.log.write(sid, event, data),
+                    retriever=self.registry.retriever,
                 )
                 self._locks[session_id] = threading.Lock()
             return self.sessions[session_id]
@@ -120,6 +152,9 @@ class Hub:
             if fresh:
                 agent.reset()
             return agent.ask(text)
+        except Exception as e:
+            self.log.write(session_id, "error", {"error": f"{type(e).__name__}: {e}"})
+            raise
         finally:
             current_channel.reset(token)
             lock.release()

@@ -76,6 +76,7 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
         # Без approver опасные инструменты запрещены — безопасное поведение по умолчанию.
         self.approver = approver
+        self.retriever: Callable[[str], str] | None = None  # автопоиск в базе знаний (см. Agent.retriever)
 
     def register(
         self, func: Callable[..., Any] | None = None, *, name: str | None = None,

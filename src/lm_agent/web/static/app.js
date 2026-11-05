@@ -834,6 +834,12 @@ api("/api/info")
   .then((info) => {
     els.model.textContent = info.model;
     $("#docs-dir").textContent = info.docs_dir;
+    if (info.knowledge && info.knowledge.length) {
+      const note = $("#kb-note");
+      note.textContent = "Также подключены базы знаний (только чтение): " +
+        info.knowledge.map((k) => `${k.path} — ${k.files} файл(ов)`).join("; ");
+      note.hidden = false;
+    }
     if (!info.memory) $("#btn-memory").hidden = true;
     if (!info.docs) $("#btn-docs").hidden = true;
     mic.btn.hidden = !info.voice;

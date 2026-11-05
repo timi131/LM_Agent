@@ -70,7 +70,7 @@ def build_agent(settings: Settings, verbose: bool = True, toolkits: tuple[str, .
 
     return Agent(
         client=client, tools=registry, settings=settings, on_tool=show, on_token=token,
-        context=make_context(settings, memory, toolkits),
+        context=make_context(settings, memory, toolkits), retriever=registry.retriever,
     )
 
 

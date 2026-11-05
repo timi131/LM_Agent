@@ -75,8 +75,8 @@ def test_context_lists_files(setup, tmp_path):
     (docs_dir / "регламент.md").write_text("текст")
     settings = Settings(docs_dir=docs_dir, workspace=tmp_path / "ws", data_dir=tmp_path / "data")
     ctx = make_context(settings, None)()
-    assert "- регламент.md" in ctx
-    assert "6711_70377_cases_bf3ee317.csv (таблица" in ctx
+    assert "регламент.md" not in ctx and "подключены" in ctx  # имена документов сбивали модель
+    assert "- 6711_70377_cases_bf3ee317.csv" in ctx
 
 
 def test_categories_listed_and_wrong_value_flagged(setup):

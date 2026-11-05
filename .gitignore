@@ -9,3 +9,5 @@ workspace/*
 services.json
 docs/*
 !docs/.gitkeep
+knowledge/
+evals/last_results.json

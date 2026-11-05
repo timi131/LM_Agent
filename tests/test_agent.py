@@ -74,7 +74,7 @@ def test_repeated_identical_call_is_stopped(tmp_path):
     assert results[2].startswith("Не выполнено")
 
 
-def test_promise_without_action_is_nudged_once(tmp_path):
+def test_promise_without_action_is_nudged(tmp_path):
     from lm_agent.agent import NUDGE
 
     agent = make_agent([
@@ -85,7 +85,78 @@ def test_promise_without_action_is_nudged_once(tmp_path):
     assert agent.ask("сделай отчёт") == "Готово: 4"
     assert [m["content"] for m in agent.messages if m["role"] == "user"] == ["сделай отчёт", NUDGE]
 
-    agent = make_agent([answer("Сейчас найду."), answer("Сейчас найду ещё раз.")], tmp_path)
-    assert agent.ask("x") == "Сейчас найду ещё раз."  # второй раз не подталкиваем — без зацикливания
+    agent = make_agent([answer("Сейчас найду."), answer("Сейчас найду ещё раз."), answer("Сейчас найду в третий раз.")], tmp_path)
+    assert agent.ask("x") == "Сейчас найду в третий раз."  # больше двух раз не подталкиваем — без зацикливания
     agent = make_agent([answer("Привет! Чем помочь?")], tmp_path)
     assert agent.ask("привет") == "Привет! Чем помочь?"  # обычный ответ не трогаем
+
+
+def test_more_promises_nudged_and_logged(tmp_path):
+    from lm_agent.agent import NUDGE
+
+    events = []
+    agent = make_agent([
+        answer("Я найду информацию о населении. Пожалуйста, подождите."),
+        answer("Секундочку."),
+        answer("Население — 1,3 млн"),
+    ], tmp_path)
+    agent.log = lambda event, data: events.append(event)
+    assert agent.ask("сколько жителей?") == "Население — 1,3 млн"
+    assert [m["content"] for m in agent.messages if m["role"] == "user"].count(NUDGE) == 2
+    assert events == ["user", "nudge", "nudge", "answer"] and agent.stop_reason == "answer"
+
+
+def test_try_again_promise_nudged(tmp_path):
+    agent = make_agent([answer("Извините, возникла ошибка. Давайте попробуем ещё раз."), answer("Готово")], tmp_path)
+    assert agent.ask("x") == "Готово"
+
+
+def test_finished_answers_are_not_promises():
+    from lm_agent.agent import is_promise
+
+    for text in [
+        "Проверьте ИНН на сайте. Если ИП зарегистрировали недавно, подождите до следующего дня. Если не помогло, напишите нам.",
+        "Если ИП зарегистрировали недавно, подождите до следующего дня.",
+        "Откройте раздел «Имена». Затем нажмите «Сохранить».",
+        "Далее введите код из SMS.",
+        "Я создал файл отчёт.docx.",
+        "Теперь создан отчёт за сентябрь.",
+        "Сначала я проверю баланс.\n\nБаланс: 100 рублей.",
+        "Подробности: https://docs.redsms.ru/knowledge-base/reports/",
+    ]:
+        assert not is_promise(text), text
+
+
+def test_real_promises_are_detected():
+    from lm_agent.agent import is_promise
+
+    for text in [
+        "Теперь я создам документ.",
+        "Сейчас проверю",
+        "Давайте попробуем ещё раз.",
+        "Я найду информацию. Пожалуйста, подождите.",
+        "Подождите немного…",
+        "Секундочку.",
+    ]:
+        assert is_promise(text), text
+
+
+def test_knowledge_attached_before_question_and_replaced(tmp_path):
+    from lm_agent.agent import KB_PREFIX
+
+    agent = make_agent([answer("Картой"), answer("Не знаю")], tmp_path)
+    agent.retriever = lambda q: "Вопрос: Как оплатить?\nОтвет: Картой." if "оплат" in q else ""
+    assert agent.ask("как оплатить?") == "Картой"
+    assert agent.messages[1]["content"] == KB_PREFIX + "Вопрос: Как оплатить?\nОтвет: Картой."  # перед вопросом
+    assert agent.messages[2]["content"] == "как оплатить?"
+    assert sum(m["role"] == "system" for m in agent.messages) == 1  # системный текст не меняется: кэш Ollama цел
+    agent.ask("а погода?")  # статьи к прошлому вопросу убраны, новых нет
+    assert not any(m["content"].startswith(KB_PREFIX) for m in agent.messages)
+
+
+def test_retriever_failure_does_not_break_answer(tmp_path):
+    agent = make_agent([answer("Ок")], tmp_path)
+    def boom(q):
+        raise ConnectionError("нет Ollama")
+    agent.retriever = boom
+    assert agent.ask("вопрос") == "Ок"

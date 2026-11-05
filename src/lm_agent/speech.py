@@ -91,9 +91,9 @@ def make_transcriber(settings) -> Transcriber | None:
         import faster_whisper  # noqa: F401
     except ImportError:
         return None
-    prompt = os.getenv("LM_AGENT_WHISPER_PROMPT", DEFAULT_PROMPT).strip()
+    prompt = os.getenv("LM_AGENT_WHISPER_PROMPT", "").strip() or DEFAULT_PROMPT  # пусто — словарь по умолчанию
     return Transcriber(
         size, settings.data_dir / "whisper",
         language=os.getenv("LM_AGENT_WHISPER_LANGUAGE", "").strip() or "ru",
-        prompt=None if prompt in ("", "-") else prompt,
+        prompt=None if prompt == "-" else prompt,
     )

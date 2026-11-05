@@ -180,3 +180,77 @@ def test_doc_search(tmp_path):
     (docs_dir / "tax.txt").unlink()
     assert "удалено 1" in reg.call("index_documents", {})
     assert docs.DocIndex(client, "fake", docs_dir, tmp_path / "idx.json").files.keys() == {"pets.md"}
+
+
+FAQ = """# База знаний
+
+## Имена отправителей
+
+### Q1. Как проверить статус имени?
+- ответ:
+  Откройте раздел «Имена» в личном кабинете.
+
+### Q2. Почему имя недоступно у оператора?
+- ответ:
+  Оно ещё не зарегистрировано у этого оператора.
+- требует проверки: да
+
+## API
+
+### Q8. Почему SMS не доставляются?
+- ответ:
+  Проверьте статус сообщения.
+"""
+
+
+def test_markdown_split_by_articles():
+    sections = docs.markdown_sections(FAQ)
+    assert len(sections) == 3  # ровно по статье на вопрос
+    assert sections[1].startswith("Раздел: База знаний / Имена отправителей\n### Q2.")
+    assert "требует проверки: да" in sections[1] and "Q8" not in sections[1]
+    assert sections[2].startswith("Раздел: База знаний / API\n### Q8.")
+
+
+def test_json_records_and_extra_sources(tmp_path):
+    kb = tmp_path / "knowledge"
+    kb.mkdir()
+    (kb / "faq.md").write_text(FAQ, encoding="utf-8")
+    templates = tmp_path / "templates.json"
+    templates.write_text(json.dumps([{"keywords": ["модерация"], "answer": "Сообщение на проверке"}]), encoding="utf-8")
+    assert docs.json_records(templates.read_text()) == ["Ключевые слова: модерация\nОтвет: Сообщение на проверке"]
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "своё.txt").write_text("заметка")
+    found = {key for key, _ in docs.all_documents(docs_dir, [kb, templates, tmp_path / "нет"])}
+    assert found == {"своё.txt", "knowledge/faq.md", "templates.json"}  # несуществующий источник пропущен
+
+    index = docs.DocIndex(FakeEmbedClient(), "fake", docs_dir, tmp_path / "idx.json", [kb, templates])
+    index.update()
+    assert len(index.files["knowledge/faq.md"]["chunks"]) == 3 and len(index.files["templates.json"]["chunks"]) == 1
+
+
+def test_jsonl_faq_even_named_md(tmp_path):
+    faq = tmp_path / "faq.md"
+    faq.write_text(
+        json.dumps({"id": "Q1", "category": "Доставка", "question": "Почему нет SMS?", "answer": "Проверьте статус.",
+                    "metadata": {"требует проверки": "да", "уточнить": "логин"}}, ensure_ascii=False) + "\n"
+        + json.dumps({"id": "Q2", "question": "Как оплатить?", "answer": "Картой."}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    assert docs.document_chunks(faq) == [
+        "Раздел: Доставка\nВопрос: Почему нет SMS?\nОтвет: Проверьте статус.\nТребует проверки: да\nУточнить: логин",
+        "Вопрос: Как оплатить?\nОтвет: Картой.",
+    ]
+    assert docs.jsonl_records("# Обычный Markdown\n\nТекст") == []
+
+
+def test_retrieve_only_from_knowledge_sources(tmp_path):
+    kb = tmp_path / "kb.md"
+    kb.write_text(json.dumps({"question": "Что такое налог?", "answer": "Платёж."}, ensure_ascii=False), encoding="utf-8")
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "заявки.txt").write_text("кошка кошка кошка")
+    index = docs.DocIndex(FakeEmbedClient(), "fake", docs_dir, tmp_path / "idx.json", [kb])
+    assert "Платёж" in index.retrieve("налог")
+    assert index.retrieve("кошка") == ""  # чужой документ не подмешивается, а слабое совпадение отбрасывается

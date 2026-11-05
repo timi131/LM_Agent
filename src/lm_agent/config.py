@@ -17,11 +17,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "Для актуальных фактов из интернета не полагайся на свои знания: найди через web_search "
     "и открой самый подходящий источник через fetch_url. "
     "Для действий на сайтах (клики, формы, вход в аккаунт, динамические страницы) используй browser_*: "
-    "открой страницу, найди нужный элемент по номеру в снимке и действуй. Если нужен вход — попроси "
+    "открой страницу, найди нужный элемент по номеру в снимке и действуй. Если нужного факта нет в видимом "
+    "тексте снимка — прочитай страницу целиком через browser_read_page, а не кликай наугад. Если нужен вход — попроси "
     "пользователя войти самому в окне браузера. "
     "Для вопросов по таблицам (CSV, Excel) — сколько, кто чаще, среднее, список по условию — "
     "используй table_info, затем table_query с SQL (таблица называется t, имена колонок в двойных кавычках). "
-    "search_documents — для поиска по смыслу в текстах. "
+    "search_documents — для поиска по смыслу в текстах и в базе знаний. "
+    "На вопросы о REDSMS и его услугах (имена отправителей, шаблоны, доставка, API, тарифы, договоры) "
+    "сначала ищи ответ в базе знаний через search_documents и отвечай по найденной статье, не выдумывая "
+    "сроков, цен и правил. Если в статье стоит «требует проверки: да» — скажи, что ответ нужно уточнить "
+    "у специалиста поддержки. Если подходящей статьи нет — честно скажи об этом. "
     "Когда просят документ, отчёт, справку или файл — создай его: create_document (Word или PDF из Markdown), "
     "create_spreadsheet (Excel), export_query (Excel прямо из SQL по таблице — точные числа). "
     "Для отчёта по таблице сначала посчитай нужное через table_query, затем оформи документ. "
@@ -46,8 +51,10 @@ class Settings:
     workspace: Path = Path("./workspace")
     # Папки, где агент может работать с файлами. Запись вне workspace — только с подтверждением.
     file_roots: list[Path] = field(default_factory=lambda: [Path.home()])
-    # Папка с документами для поиска (RAG).
+    # Папка с документами для поиска (RAG); сюда же загружаются файлы из веб-чата.
     docs_dir: Path = Path("./docs")
+    # Дополнительные базы знаний только для чтения: папки или файлы (через ":"), например ~/bot/knowledge.
+    knowledge: list[Path] = field(default_factory=list)
     # Служебные данные: память, индекс документов.
     data_dir: Path = field(default_factory=lambda: Path("~/.lm_agent").expanduser())
     services_file: Path = Path("./services.json")
@@ -84,6 +91,7 @@ class Settings:
             workspace=Path(env("LM_AGENT_WORKSPACE", str(d.workspace))).expanduser(),
             file_roots=_paths(env("LM_AGENT_FILE_ROOTS", "")) or d.file_roots,
             docs_dir=Path(env("LM_AGENT_DOCS", str(d.docs_dir))).expanduser(),
+            knowledge=_paths(env("LM_AGENT_KNOWLEDGE", "")),
             data_dir=Path(env("LM_AGENT_DATA", str(d.data_dir))).expanduser(),
             services_file=Path(env("LM_AGENT_SERVICES", str(d.services_file))).expanduser(),
             max_steps=int(env("LM_AGENT_MAX_STEPS", d.max_steps)),

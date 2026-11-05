@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from ..config import Settings
@@ -43,8 +42,12 @@ def build_registry(
     if "mail" in enabled:
         mail.register(registry)
     if "docs" in enabled:
-        index = docs.DocIndex(client, settings.embed_model, settings.docs_dir, settings.data_dir / "doc_index.json")
+        index = docs.DocIndex(
+            client, settings.embed_model, settings.docs_dir, settings.data_dir / "doc_index.json", settings.knowledge,
+        )
         docs.register(registry, index)
+        if settings.knowledge:
+            registry.retriever = index.retrieve
     table_store = None
     if "tables" in enabled:
         table_store = tables.Tables([settings.docs_dir, settings.workspace], settings.data_dir / "tables")
@@ -68,16 +71,13 @@ def make_context(settings: Settings, mem: memory.Memory | None, enabled: tuple[s
         parts = []
         if mem is not None and mem.as_prompt():
             parts.append(mem.as_prompt())
-        if "docs" in enabled or "tables" in enabled:
-            names = [str(p.relative_to(settings.docs_dir)) for p in docs.list_documents(settings.docs_dir)]
-            table_names = {p.name for p in tables.find_tables([settings.docs_dir, settings.workspace])}
-            if names or table_names:
-                shown = sorted(set(names) | table_names)[:MAX_FILES_IN_PROMPT]
-                lines = "\n".join(
-                    f"- {n}" + (" (таблица: отвечай через table_info/table_query)" if Path(n).name in table_names else "")
-                    for n in shown
-                )
-                parts.append(f"Файлы пользователя, загруженные в «Документы»:\n{lines}")
+        if "tables" in enabled:
+            names = [p.name for p in tables.find_tables([settings.docs_dir, settings.workspace])][:MAX_FILES_IN_PROMPT]
+            if names:
+                lines = "\n".join(f"- {n}" for n in names)
+                parts.append(f"Таблицы пользователя (отвечай по ним через table_info и table_query):\n{lines}")
+        if "docs" in enabled and docs.all_documents(settings.docs_dir, settings.knowledge):
+            parts.append("Документы и база знаний подключены: ищи в них через search_documents, открывать файлы не нужно.")
         return "\n\n".join(parts)
 
     return context

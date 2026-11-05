@@ -25,11 +25,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import telegram
-from ..agent import NUDGE, Agent
+from ..agent import KB_PREFIX, NUDGE, Agent
 from ..config import Settings
 from ..hub import Busy, Collector, Hub, error_text
 from ..scheduler import Scheduler, register_tools
 from ..toolkits import ALL
+from ..toolkits import docs as docs_kit
 
 STATIC = Path(__file__).parent / "static"
 APPROVAL_TIMEOUT = 300
@@ -91,7 +92,7 @@ def _history(agent: Agent) -> list[dict]:
             pending_args = [c.get("function", {}).get("arguments") or {} for c in m.get("tool_calls") or []]
             if m.get("content"):
                 out.append({"role": "assistant", "content": m["content"]})
-        elif m["role"] == "user" and m["content"] != NUDGE:
+        elif m["role"] == "user" and m["content"] != NUDGE and not m["content"].startswith(KB_PREFIX):
             out.append({"role": "user", "content": m["content"]})
         elif m["role"] == "tool":
             args = pending_args.pop(0) if pending_args else {}
@@ -188,6 +189,10 @@ def create_app(
             "tools": registry.names(),
             "auto_approve": settings.auto_approve,
             "docs_dir": str(settings.docs_dir.resolve()),
+            "knowledge": [
+                {"path": str(p), "files": len(docs_kit.all_documents(Path("/nonexistent"), [p]))}
+                for p in settings.knowledge if p.exists()
+            ],
             "memory": memory is not None,
             "docs": "docs" in toolkits,
             "browser": browser is not None,

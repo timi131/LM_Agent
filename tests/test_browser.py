@@ -163,3 +163,12 @@ def test_unreachable_site_explained(setup):
         pytest.skip("Нет ни Chromium, ни Chrome")
     assert out.startswith("⚠️ Сайт не открылся: сервер отклонил подключение (ERR_CONNECTION_REFUSED)")
     assert "не агента" in out and "Элементы" not in out  # без бесполезного снимка страницы ошибки
+
+
+def test_typing_into_non_input_explained(setup, page_url):
+    reg, _, _ = setup()
+    snap = reg.call("browser_open", {"url": page_url})
+    if "Браузер не найден" in snap:
+        pytest.skip("Нет ни Chromium, ни Chrome")
+    out = reg.call("browser_type", {"ref": ref_of(snap, "Показать меню"), "text": "x"})
+    assert "нельзя ввести текст — это button, а не поле ввода" in out
