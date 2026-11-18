@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import secrets
 import tempfile
 import threading
 import uuid
@@ -38,6 +39,23 @@ APPROVAL_TIMEOUT = 300
 UPLOAD_LIMIT = 50 * 1024 * 1024
 VOICE_LIMIT = 25 * 1024 * 1024
 ARTICLE_LIMIT = 10_000
+
+
+def _get_or_create_web_token(path: Path) -> tuple[str, bool]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        token = path.read_text(encoding="utf-8").strip()
+        if not token:
+            raise RuntimeError(f"Файл токена пуст: {path}")
+        os.chmod(path, 0o600)
+        return token, False
+
+    token = secrets.token_urlsafe(32)
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        file.write(token + "\n")
+    return token, True
 
 
 class Channel:
@@ -145,11 +163,11 @@ class ModelSelection(BaseModel):
 
 def create_app(
     settings: Settings | None = None, toolkits: tuple[str, ...] = ALL, client: Any = None,
-    background: bool = True,
+    background: bool = True, web_token: str | None = None,
 ) -> FastAPI:
     """background=False — без прогрева, планировщика и Telegram (для тестов)."""
     settings = settings or Settings.from_env()
-    token = os.getenv("LM_AGENT_WEB_TOKEN", "")
+    token = web_token if web_token is not None else os.getenv("LM_AGENT_WEB_TOKEN", "")
     hub = Hub(settings, toolkits, client)
     registry, memory, browser = hub.registry, hub.memory, hub.browser
     scheduler = Scheduler(hub, settings.data_dir / "schedule.json")
@@ -559,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-y", "--yes", action="store_true", help="не спрашивать подтверждений (опасно)")
     parser.add_argument(
         "--lan", action="store_true",
-        help="открыть доступ из локальной сети (то же, что --host 0.0.0.0); нужен LM_AGENT_WEB_TOKEN",
+        help="открыть доступ из локальной сети (то же, что --host 0.0.0.0); токен создаётся автоматически",
     )
     parser.add_argument(
         "--https", action="store_true", default=os.getenv("LM_AGENT_WEB_HTTPS", "").lower() in ("1", "true", "yes"),
@@ -583,12 +601,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"неизвестные наборы: {', '.join(sorted(unknown))}. Доступны: {', '.join(ALL)}")
 
     local_only = args.host in ("127.0.0.1", "localhost", "::1")
+    web_token = os.getenv("LM_AGENT_WEB_TOKEN", "")
     if not local_only and not os.getenv("LM_AGENT_WEB_TOKEN"):
-        parser.error(
-            f"сервер будет доступен по сети ({args.host}), а у агента есть shell и доступ к файлам — "
-            "сначала задайте LM_AGENT_WEB_TOKEN в .env (сгенерировать: "
-            "python3 -c \"import secrets; print(secrets.token_urlsafe(16))\")"
-        )
+        token, created = _get_or_create_web_token(settings.data_dir / "web_token")
+        web_token = token
+        if created:
+            print("Автоматически создан токен входа (сохраните его; он показан только один раз):")
+            print(token)
+            print(f"Токен хранится в {settings.data_dir / 'web_token'}")
 
     ssl = {}
     scheme = "https" if args.https else "http"
@@ -610,7 +630,10 @@ def main(argv: list[str] | None = None) -> int:
             print("  Браузер предупредит о непроверенном сертификате: это ваш сертификат — нажмите «Всё равно перейти».")
         else:
             print("  Микрофон по сети работает только с --https.")
-    uvicorn.run(create_app(settings, toolkits), host=args.host, port=args.port, log_level="warning", **ssl)
+    uvicorn.run(
+        create_app(settings, toolkits, web_token=web_token or None),
+        host=args.host, port=args.port, log_level="warning", **ssl,
+    )
     return 0
 
 

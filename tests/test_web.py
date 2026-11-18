@@ -1,8 +1,11 @@
+import os
+import stat
+
 import pytest
 from fastapi.testclient import TestClient
 
 from lm_agent import Settings
-from lm_agent.web.server import create_app
+from lm_agent.web.server import _get_or_create_web_token, create_app
 
 
 class FakeClient:
@@ -221,6 +224,36 @@ def test_token(make, monkeypatch):
     client = make()
     assert client.get("/api/info").status_code == 401
     assert client.get("/api/info", headers={"X-Token": "s3cret"}).status_code == 200
+
+
+def test_web_token_is_generated_and_persisted(tmp_path):
+    path = tmp_path / "data" / "web_token"
+
+    token, created = _get_or_create_web_token(path)
+    persisted_token, created_again = _get_or_create_web_token(path)
+
+    assert created and not created_again
+    assert len(token) >= 40 and persisted_token == token
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_network_start_creates_token_automatically(tmp_path, monkeypatch, capsys):
+    import uvicorn
+
+    from lm_agent.web import server
+
+    monkeypatch.delenv("LM_AGENT_WEB_TOKEN", raising=False)
+    monkeypatch.setenv("LM_AGENT_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("LM_AGENT_WORKSPACE", str(tmp_path / "workspace"))
+    monkeypatch.setenv("LM_AGENT_DOCS", str(tmp_path / "docs"))
+    monkeypatch.setenv("LM_AGENT_SERVICES", str(tmp_path / "services.json"))
+    monkeypatch.setenv("LM_AGENT_FILE_ROOTS", str(tmp_path))
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+
+    assert server.main(["--host", "0.0.0.0"]) == 0
+
+    token = (tmp_path / "data" / "web_token").read_text(encoding="utf-8").strip()
+    assert token and token in capsys.readouterr().out
 
 
 def test_memory_api(make):
