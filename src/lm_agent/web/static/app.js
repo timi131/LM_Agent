@@ -609,6 +609,7 @@ function openDrawer(tab) {
   document.querySelectorAll(".panel").forEach((p) => { p.hidden = p.dataset.panel !== tab; });
   if (tab === "memory") loadMemory();
   else if (tab === "tasks") loadTasks();
+  else if (tab === "models") loadModels();
   else loadDocs();
 }
 function closeDrawer() {
@@ -622,6 +623,83 @@ $("#drawer-close").addEventListener("click", closeDrawer);
 els.scrim.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !els.drawer.hidden) closeDrawer(); });
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => openDrawer(b.dataset.tab)));
+$("#model-add").addEventListener("click", () => openDrawer("models"));
+
+async function loadModels() {
+  try {
+    const data = await api("/api/models");
+    els.model.replaceChildren();
+    for (const item of data.local) {
+      const option = document.createElement("option");
+      option.value = `local:${item.id}`;
+      option.textContent = item.name;
+      option.dataset.kind = "local";
+      option.dataset.model = item.id;
+      option.selected = item.id === data.active;
+      els.model.append(option);
+    }
+    for (const item of data.external) {
+      const option = document.createElement("option");
+      option.value = `external:${item.id}`;
+      option.textContent = item.name;
+      option.dataset.kind = "external";
+      option.dataset.model = item.id;
+      option.selected = item.model === data.active;
+      els.model.append(option);
+    }
+
+    const list = $("#external-model-list");
+    list.replaceChildren();
+    if (!data.external.length) list.append(emptyItem("Внешние модели не добавлены."));
+    for (const item of data.external) {
+      list.append(listItem(item.name, `${item.base_url} · ${item.model}`, async () => {
+        if (!confirm(`Удалить модель «${item.name}»?`)) return;
+        await api(`/api/models/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        await loadModels();
+      }));
+    }
+  } catch (e) {
+    $("#model-status").textContent = e.message;
+  }
+}
+
+els.model.addEventListener("change", async () => {
+  const option = els.model.selectedOptions[0];
+  if (!option) return;
+  try {
+    await api("/api/models/select", {
+      method: "POST",
+      body: JSON.stringify({
+        kind: option.dataset.kind,
+        model: option.dataset.model,
+      }),
+    });
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+$("#model-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#model-status");
+  status.textContent = "Добавление…";
+  try {
+    await api("/api/models", {
+      method: "POST",
+      body: JSON.stringify({
+        name: $("#model-name").value.trim(),
+        base_url: $("#model-base-url").value.trim(),
+        model: $("#model-id").value.trim(),
+        api_key: $("#model-key").value,
+      }),
+    });
+    e.target.reset();
+    status.textContent = "Модель добавлена.";
+    await loadModels();
+  } catch (error) {
+    status.textContent = error.message;
+  }
+});
 
 function listItem(text, meta, onDelete) {
   const li = document.createElement("li");
@@ -980,7 +1058,7 @@ $("#btn-browser").addEventListener("click", () => {
 // --- старт ---
 api("/api/info")
   .then((info) => {
-    els.model.textContent = info.model;
+    loadModels();
     $("#docs-dir").textContent = info.docs_dir;
     if (info.knowledge && info.knowledge.length) {
       const note = $("#kb-note");
@@ -1000,7 +1078,7 @@ api("/api/info")
     } else {
       $("#btn-browser").hidden = true;
     }
-    if (info.auto_approve) els.model.textContent += " · без подтверждений";
+    if (info.auto_approve) $("#model-status").textContent = "Опасные действия выполняются без подтверждений.";
   })
   .catch((e) => { if (!gateShown) addMessage("error", `Сервер недоступен: ${e.message}`); });
 connect();

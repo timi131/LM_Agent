@@ -15,7 +15,8 @@
     <div class="brand">
       <img class="logo-redsms" src="/static/redsms-logo.svg" alt="REDSMS" width="106" height="24">
       <span class="brand-name">Агент</span>
-      <span class="badge" id="model" title="Модель Ollama">…</span>
+      <select class="badge model-select" id="model" title="Локальная или внешняя модель" aria-label="Модель"><option>…</option></select>
+      <button class="badge model-add" id="model-add" title="Добавить внешнюю модель" aria-label="Добавить внешнюю модель">+</button>
       <span class="status" id="status" title="Соединение с сервером"></span>
     </div>
     <nav class="actions">
@@ -87,12 +88,28 @@
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-head">
       <div class="tabs" role="tablist">
+        <button role="tab" data-tab="models">Модели</button>
         <button role="tab" data-tab="memory">Память</button>
         <button role="tab" data-tab="docs">Документы</button>
         <button role="tab" data-tab="tasks">Задачи</button>
       </div>
       <button class="ghost icon" id="drawer-close" title="Закрыть">✕</button>
     </div>
+
+    <section class="panel" data-panel="models">
+      <p class="hint">Можно выбрать установленную модель Ollama или подключить внешний сервис с OpenAI-compatible API.</p>
+      <form class="task-form" id="model-form">
+        <input id="model-name" placeholder="Название, например GPT-4o" required>
+        <input id="model-base-url" placeholder="Base URL: https://api.example.com/v1" required>
+        <input id="model-id" placeholder="Идентификатор модели: gpt-4o" required>
+        <input id="model-key" type="password" placeholder="API key (если нужен)" autocomplete="off">
+        <div class="row">
+          <button class="primary small">Добавить модель</button>
+          <span class="muted small" id="model-status"></span>
+        </div>
+      </form>
+      <ul class="list" id="external-model-list"></ul>
+    </section>
 
     <section class="panel" data-panel="memory">
       <p class="hint">Факты отсюда агент видит в каждом разговоре. Он добавляет их сам, когда вы о чём-то просите помнить, или их можно добавить вручную.</p>

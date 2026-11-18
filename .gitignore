@@ -11,3 +11,5 @@ docs/*
 !docs/.gitkeep
 knowledge/
 evals/last_results.json
+.lm-agent.pid
+.lm-agent.log

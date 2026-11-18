@@ -15,9 +15,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import ollama
+import httpx
 
 from .agent import Agent, ToolEvent
 from .config import Settings
+from .models import ExternalModelStore, OpenAICompatibleClient
 from .speech import make_transcriber
 from .toolkits import ALL, build_registry, make_browser, make_context
 
@@ -90,10 +92,13 @@ class Hub:
     def __init__(self, settings: Settings, toolkits: tuple[str, ...] = ALL, client: Any = None) -> None:
         self.settings = settings
         self.toolkits = toolkits
-        self.client = client or ollama.Client(host=settings.host)
+        self.local_client = client or ollama.Client(host=settings.host)
+        self.client = self.local_client
+        self.model_store = ExternalModelStore(settings.data_dir / "external_models.json")
+        self.active_external: dict | None = None
         self.browser = make_browser(settings) if "browser" in toolkits else None
         self.registry, self.memory = build_registry(
-            settings, self.client, self._approve, toolkits, browser_instance=self.browser,
+            settings, self.local_client, self._approve, toolkits, browser_instance=self.browser,
         )
         # распознавание речи — одно на веб-чат и Telegram (модель в памяти одна)
         self.transcriber = make_transcriber(settings)
@@ -101,6 +106,93 @@ class Hub:
         self.sessions: dict[str, Agent] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+
+    def local_models(self) -> list[dict]:
+        try:
+            response = self.local_client.list()
+            data = response.model_dump() if hasattr(response, "model_dump") else response
+            models = data.get("models", []) if isinstance(data, dict) else []
+            return [{"id": m.get("model") or m.get("name", ""), "name": m.get("name") or m.get("model", ""),
+                     "kind": "local"} for m in models if m]
+        except Exception:
+            try:
+                data = httpx.get(f"{self.settings.host.rstrip('/')}/api/tags", timeout=3).json()
+                return [{"id": m["name"], "name": m["name"], "kind": "local"}
+                        for m in data.get("models", [])]
+            except Exception:
+                return []
+
+    def external_models(self) -> list[dict]:
+        return [{
+            "id": item["id"],
+            "name": item.get("name") or item["id"],
+            "kind": "external",
+            "base_url": item["base_url"],
+            "model": item["model"],
+        } for item in self.model_store.load()]
+
+    def models(self) -> dict:
+        return {"active": self.settings.model, "local": self.local_models(), "external": self.external_models()}
+
+    def add_external_model(self, name: str, base_url: str, model: str, api_key: str = "") -> dict:
+        name = name.strip()
+        base_url = base_url.strip().rstrip("/")
+        model = model.strip()
+        if not name or not base_url or not model:
+            raise ValueError("name, base_url и model обязательны")
+        if base_url.endswith("/chat/completions"):
+            base_url = base_url[:-len("/chat/completions")]
+        items = self.model_store.load()
+        item = next((x for x in items if x["model"] == model and x["base_url"] == base_url), None)
+        if item:
+            item["name"] = name
+            if api_key:
+                item["api_key"] = api_key
+        else:
+            item = {"id": f"external-{len(items) + 1}", "name": name, "base_url": base_url,
+                    "model": model, "api_key": api_key}
+            items.append(item)
+        self.model_store.save(items)
+        return {"id": item["id"], "name": item["name"], "kind": "external",
+                "base_url": base_url, "model": model}
+
+    def delete_external_model(self, model_id: str) -> bool:
+        items = self.model_store.load()
+        kept = [item for item in items if item["id"] != model_id]
+        if len(kept) == len(items):
+            return False
+        self.model_store.save(kept)
+        if self.active_external and self.active_external["id"] == model_id:
+            locals = self.local_models()
+            fallback = locals[0]["id"] if locals else "qwen2.5:7b"
+            self.select_local_model(fallback)
+        return True
+
+    def select_local_model(self, model: str) -> None:
+        model = model.strip()
+        if not model:
+            raise ValueError("Модель не задана")
+        self.settings.model = model
+        self.client = self.local_client
+        self.active_external = None
+        with self._guard:
+            for agent in self.sessions.values():
+                agent.settings.model = model
+                agent.client = self.local_client
+
+    def select_external_model(self, model_id: str) -> dict:
+        item = next((x for x in self.model_store.load() if x["id"] == model_id), None)
+        if not item:
+            raise KeyError("Внешняя модель не найдена")
+        self.active_external = item
+        self.settings.model = item["model"]
+        self.client = OpenAICompatibleClient(item["base_url"], item.get("api_key", ""), item["model"])
+        with self._guard:
+            for agent in self.sessions.values():
+                agent.settings.model = item["model"]
+                agent.client = self.client
+        return {"id": item["id"], "name": item["name"], "kind": "external",
+                "base_url": item["base_url"], "model": item["model"]}
 
     # --- связь агента с каналом ---
 

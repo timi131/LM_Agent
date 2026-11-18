@@ -131,6 +131,18 @@ class TaskPatch(BaseModel):
     enabled: bool
 
 
+class ExternalModelIn(BaseModel):
+    name: str
+    base_url: str
+    model: str
+    api_key: str = ""
+
+
+class ModelSelection(BaseModel):
+    kind: str
+    model: str
+
+
 def create_app(
     settings: Settings | None = None, toolkits: tuple[str, ...] = ALL, client: Any = None,
     background: bool = True,
@@ -211,6 +223,37 @@ def create_app(
             "telegram": bool(bot),
             "voice": hub.transcriber is not None,
         }
+
+    @app.get("/api/models")
+    def models():
+        return hub.models()
+
+    @app.post("/api/models")
+    def add_model(req: ExternalModelIn):
+        try:
+            return hub.add_external_model(req.name, req.base_url, req.model, req.api_key)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.delete("/api/models/{model_id}")
+    def delete_model(model_id: str):
+        if not hub.delete_external_model(model_id):
+            raise HTTPException(404, "Модель не найдена")
+        return {"ok": True}
+
+    @app.post("/api/models/select")
+    def select_model(req: ModelSelection):
+        try:
+            if req.kind == "local":
+                hub.select_local_model(req.model)
+                return {"id": req.model, "name": req.model, "kind": "local", "model": req.model}
+            if req.kind == "external":
+                return hub.select_external_model(req.model)
+            raise HTTPException(400, "Неизвестный тип модели")
+        except KeyError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
 
     @app.post("/api/chat")
     async def chat(req: ChatRequest):

@@ -64,6 +64,32 @@ def test_index_and_info(make):
     assert "run_command" in info["tools"] and info["auto_approve"] is False
 
 
+def test_external_models_api(make):
+    client = make()
+    assert client.get("/api/models").json()["external"] == []
+
+    created = client.post("/api/models", json={
+        "name": "GPT тест",
+        "base_url": "https://example.com/v1/",
+        "model": "test-model",
+        "api_key": "secret",
+    })
+    assert created.status_code == 200
+    item = created.json()
+    assert item["base_url"] == "https://example.com/v1"
+    assert "secret" not in created.text
+
+    models = client.get("/api/models").json()
+    assert any(m["id"] == item["id"] for m in models["external"])
+
+    selected = client.post("/api/models/select", json={"kind": "external", "model": item["id"]})
+    assert selected.status_code == 200
+    assert client.app.state.hub.settings.model == "test-model"
+
+    assert client.delete(f"/api/models/{item['id']}").status_code == 200
+    assert client.delete(f"/api/models/{item['id']}").status_code == 404
+
+
 def test_ws_chat_with_approval(make):
     client = make([tool_call("run_command", command="echo hi"), answer("Готово")])
     with client.websocket_connect("/ws?session=s1") as ws:

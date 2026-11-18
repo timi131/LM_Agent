@@ -84,6 +84,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.model-select { max-width: 220px; cursor: pointer; }
+.model-add { cursor: pointer; padding: 2px 7px; line-height: 1; }
 .status { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
 .status.online { background: var(--ok); }
 .status.offline { background: var(--bad); }

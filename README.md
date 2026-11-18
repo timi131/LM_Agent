@@ -17,6 +17,33 @@ uv run lm-agent -t basic,web   # только выбранные наборы и
 uv run lm-agent -m llama3.1:8b # другая модель
 ```
 
+## Выбор и подключение моделей
+
+В шапке веб-чата доступен выпадающий список установленных Ollama-моделей. Выбранная модель переключается
+для всех новых ответов без перезапуска сервера.
+
+Через кнопку `+` или вкладку «Модели» можно подключить OpenAI-compatible API. Нужны название,
+base URL вида `https://api.example.com/v1`, идентификатор модели и API key при необходимости.
+API key не возвращается интерфейсом и сохраняется локально в `~/.lm_agent/external_models.json`
+с правами доступа только владельца.
+
+Для macOS есть локальный лаунчер с отдельными действиями:
+
+```bash
+./scripts/project.sh start     # Ollama + uv sync + веб-сервер
+./scripts/project.sh open      # запустить сервер при необходимости и открыть браузер
+./scripts/project.sh status    # состояние сервера и Ollama
+./scripts/project.sh stop      # остановить веб-сервер
+./scripts/project.sh restart   # перезапустить веб-сервер
+./scripts/project.sh terminal  # интерактивный чат в терминале
+
+# Аналогичный Python-лаунчер:
+python3 scripts/project.py start
+python3 scripts/project.py open
+python3 scripts/project.py status
+python3 scripts/project.py stop
+```
+
 Команды в чате: `/tools`, `/memory`, `/reset` (очищает диалог, но не память), `/exit`.
 
 ## Веб-чат
