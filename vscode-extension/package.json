@@ -1,11 +1,18 @@
 {
   "name": "lm-agent-vscode",
   "displayName": "LM Agent",
-  "description": "Local VS Code bridge for LM Agent",
-  "version": "0.1.0",
+  "description": "VS Code chat tools and local bridge for LM Agent",
+  "version": "0.2.0",
   "publisher": "lm-agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/timi131/LM_Agent.git"
+  },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.100.0"
+  },
+  "scripts": {
+    "test": "node --test"
   },
   "categories": [
     "Other"
@@ -15,6 +22,220 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "languageModelTools": [
+      {
+        "name": "lm-agent-vscode_get_context",
+        "toolReferenceName": "lmAgentContext",
+        "displayName": "LM Agent: Editor Context",
+        "userDescription": "Read the active editor and selection.",
+        "modelDescription": "Read the active VS Code editor's file path, language, text, and current selection. Use this when the user asks about the file currently open in the editor.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(file-code)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "include_selection": {
+              "type": "boolean",
+              "description": "Include the current selection when one exists.",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_get_problems",
+        "toolReferenceName": "lmAgentProblems",
+        "displayName": "LM Agent: Problems",
+        "userDescription": "Read current VS Code diagnostics.",
+        "modelDescription": "Read errors, warnings, and other diagnostics currently shown in VS Code's Problems panel. Use this to investigate build or code issues.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(warning)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_select_project_folder",
+        "toolReferenceName": "lmAgentSelectProject",
+        "displayName": "LM Agent: Select Project Folder",
+        "userDescription": "Choose the project folder the agent can edit.",
+        "modelDescription": "Open a VS Code folder picker and set the project folder for LM Agent tools. Use before listing, opening, creating, or editing project files when the intended project is not already selected.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(folder-opened)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_select_analysis_folder",
+        "toolReferenceName": "lmAgentSelectAnalysis",
+        "displayName": "LM Agent: Select Analysis Folder",
+        "userDescription": "Choose a folder the agent may read for analysis.",
+        "modelDescription": "Open a VS Code folder picker and set a separate read-only analysis folder. Use when the user wants files analyzed without enabling edits in that folder.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(folder-library)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_list_files",
+        "toolReferenceName": "lmAgentListFiles",
+        "displayName": "LM Agent: List Files",
+        "userDescription": "List files in the selected project or analysis folder.",
+        "modelDescription": "List files and folders under the selected VS Code project or read-only analysis folder. Paths must be relative to the selected root; use scope 'analysis' only for read-only inspection.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(files)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Relative folder path; defaults to the selected root.",
+              "default": "."
+            },
+            "scope": {
+              "type": "string",
+              "enum": ["project", "analysis"],
+              "description": "Select the editable project root or read-only analysis root.",
+              "default": "project"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_read_file",
+        "toolReferenceName": "lmAgentReadFile",
+        "displayName": "LM Agent: Read File",
+        "userDescription": "Read a text file from the selected project or analysis folder.",
+        "modelDescription": "Read a text file by relative path from the selected project or read-only analysis folder. Do not use absolute paths.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(file-text)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path relative to the selected root."
+            },
+            "scope": {
+              "type": "string",
+              "enum": ["project", "analysis"],
+              "description": "Select the editable project root or read-only analysis root.",
+              "default": "project"
+            }
+          },
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_open_file",
+        "toolReferenceName": "lmAgentOpenFile",
+        "displayName": "LM Agent: Open File",
+        "userDescription": "Open a project file at a specific line in VS Code.",
+        "modelDescription": "Open a file from the selected project root in VS Code and optionally move the cursor to a line and column.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(go-to-file)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path relative to the selected project root."
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "column": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_create_file",
+        "toolReferenceName": "lmAgentCreateFile",
+        "displayName": "LM Agent: Create File",
+        "userDescription": "Create a new file under the selected project folder.",
+        "modelDescription": "Create a new text file in the selected project folder. Paths must be relative, remain inside the project, and the file must not already exist. Requires user confirmation.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(new-file)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "New file path relative to the selected project root."
+            },
+            "content": {
+              "type": "string",
+              "description": "Complete text content for the new file."
+            }
+          },
+          "required": ["path", "content"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_edit_file",
+        "toolReferenceName": "lmAgentEditFile",
+        "displayName": "LM Agent: Edit File",
+        "userDescription": "Replace the contents of a file under the selected project folder.",
+        "modelDescription": "Replace the complete text contents of an existing file in the selected project folder. Paths must be relative and remain inside the project. Requires user confirmation.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(edit)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Existing file path relative to the selected project root."
+            },
+            "content": {
+              "type": "string",
+              "description": "Complete replacement content for the file."
+            }
+          },
+          "required": ["path", "content"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lm-agent-vscode_run_terminal",
+        "toolReferenceName": "lmAgentRunTerminal",
+        "displayName": "LM Agent: Run VS Code Terminal Command",
+        "userDescription": "Send a command to a VS Code terminal rooted in the selected project.",
+        "modelDescription": "Send a command to a VS Code terminal whose working directory is the selected project root. This tool does not read command output or verify its exit status. Requires user confirmation.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(terminal)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Command to send to the VS Code terminal."
+            }
+          },
+          "required": ["command"],
+          "additionalProperties": false
+        }
+      }
+    ],
     "configuration": {
       "title": "LM Agent",
       "properties": {
@@ -36,6 +257,10 @@
       {
         "command": "lmAgent.showBridgeStatus",
         "title": "LM Agent: Show Bridge Status"
+      },
+      {
+        "command": "lmAgent.installChatProfile",
+        "title": "LM Agent: Install Copilot Chat Agent"
       }
     ]
   }

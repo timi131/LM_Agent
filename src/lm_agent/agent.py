@@ -104,12 +104,20 @@ class Agent:
     def __post_init__(self) -> None:
         self.reset()
 
-    def reset(self) -> None:
+    def _system_content(self) -> str:
         system = self.settings.system_prompt
         extra = self.context() if self.context else ""
-        if extra:
-            system += "\n\n" + extra
-        self.messages = [{"role": "system", "content": system}]
+        return system + ("\n\n" + extra if extra else "")
+
+    def reset(self) -> None:
+        self.messages = [{"role": "system", "content": self._system_content()}]
+
+    def refresh_context(self) -> None:
+        """Refreshes dynamic folder and document context without discarding the conversation."""
+        if self.messages:
+            self.messages[0] = {"role": "system", "content": self._system_content()}
+        else:
+            self.reset()
 
     def ask(self, prompt: str) -> str:
         self.cancel.clear()

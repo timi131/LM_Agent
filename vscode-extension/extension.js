@@ -17,6 +17,34 @@ let projectRoot;
 let analysisRoot;
 let agentTerminals = new Map();
 
+const chatTools = [
+  { name: "lm-agent-vscode_get_context", endpoint: "context", label: "Reading the active editor" },
+  { name: "lm-agent-vscode_get_problems", endpoint: "problems", label: "Reading VS Code problems" },
+  { name: "lm-agent-vscode_select_project_folder", endpoint: "select_project", label: "Selecting a project folder" },
+  { name: "lm-agent-vscode_select_analysis_folder", endpoint: "select_analysis", label: "Selecting an analysis folder" },
+  {
+    name: "lm-agent-vscode_list_files", endpoint: "list", label: "Listing project files",
+  },
+  {
+    name: "lm-agent-vscode_read_file", endpoint: "read", label: "Reading a project file",
+  },
+  {
+    name: "lm-agent-vscode_open_file", endpoint: "open", label: "Opening a project file",
+  },
+  {
+    name: "lm-agent-vscode_create_file", endpoint: "create", label: "Creating a project file",
+    confirmation: "Create a new project file"
+  },
+  {
+    name: "lm-agent-vscode_edit_file", endpoint: "edit", label: "Editing a project file",
+    confirmation: "Replace a project file"
+  },
+  {
+    name: "lm-agent-vscode_run_terminal", endpoint: "terminal", label: "Sending a command to the VS Code terminal",
+    confirmation: "Run a command in the VS Code terminal"
+  }
+];
+
 function tokenFilePath() {
   const configured = vscode.workspace.getConfiguration("lmAgent").get("tokenFile");
   return configured.startsWith("~")
@@ -219,6 +247,91 @@ function problems() {
   return { problems: items, truncated: total > MAX_PROBLEMS };
 }
 
+function formatToolResult(value) {
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function confirmationMessage(tool, input) {
+  const message = new vscode.MarkdownString();
+  if (input.path) {
+    message.appendText("File: ");
+    message.appendCode(input.path);
+  } else if (input.command) {
+    message.appendText("Command:\n");
+    message.appendCodeblock(input.command, "sh");
+  }
+  return {
+    title: tool.confirmation,
+    message: message.value ? message : new vscode.MarkdownString(tool.confirmation)
+  };
+}
+
+class VSCodeChatTool {
+  constructor(tool) {
+    this.tool = tool;
+  }
+
+  async prepareInvocation(options) {
+    const input = options.input || {};
+    return {
+      invocationMessage: this.tool.label,
+      ...(this.tool.confirmation
+        ? { confirmationMessages: confirmationMessage(this.tool, input) }
+        : {})
+    };
+  }
+
+  async invoke(options, token) {
+    if (token.isCancellationRequested) throw new Error("Request cancelled");
+    const input = options.input || {};
+    if (typeof input.content === "string" && Buffer.byteLength(input.content, "utf8") > MAX_BODY) {
+      throw new Error(`File content exceeds the ${MAX_BODY} byte limit`);
+    }
+    const result = await dispatch(this.tool.endpoint, input);
+    return new vscode.LanguageModelToolResult([
+      new vscode.LanguageModelTextPart(formatToolResult(result))
+    ]);
+  }
+}
+
+function registerChatTools(context) {
+  if (typeof vscode.lm?.registerTool !== "function") {
+    vscode.window.showWarningMessage(
+      "LM Agent Chat tools require VS Code 1.100 or newer with Copilot Chat enabled."
+    );
+    return;
+  }
+  for (const tool of chatTools) {
+    context.subscriptions.push(vscode.lm.registerTool(tool.name, new VSCodeChatTool(tool)));
+  }
+}
+
+async function installChatProfile() {
+  const source = path.join(extensionContext.extensionPath, "agent-profile", "lm-agent.agent.md");
+  const content = fs.readFileSync(source, "utf8");
+  const copilotHome = path.resolve(process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot"));
+  const target = path.join(copilotHome, "agents", "lm-agent.agent.md");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+
+  if (fs.existsSync(target)) {
+    if (fs.readFileSync(target, "utf8") === content) {
+      vscode.window.showInformationMessage("Профиль LM Agent уже установлен для Copilot.");
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      `Профиль ${target} уже существует. Заменить его?`,
+      { modal: true },
+      "Заменить"
+    );
+    if (choice !== "Заменить") return;
+  }
+
+  fs.writeFileSync(target, content, { encoding: "utf8", mode: 0o600 });
+  vscode.window.showInformationMessage(
+    "Профиль LM Agent установлен. Выберите его в списке агентов VS Code Chat."
+  );
+}
+
 async function dispatch(endpoint, data) {
   if (endpoint === "health") {
     return {
@@ -314,6 +427,7 @@ function activate(context) {
   });
   server.listen(port, "127.0.0.1");
   context.subscriptions.push({ dispose: () => server.close() });
+  registerChatTools(context);
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {
     for (const [cwd, item] of agentTerminals) {
       if (item === terminal) agentTerminals.delete(cwd);
@@ -330,6 +444,7 @@ function activate(context) {
     const analysis = analysisRoot || "не выбрана";
     vscode.window.showInformationMessage(`LM Agent bridge: 127.0.0.1:${port}; проект: ${project}; анализ: ${analysis}; токен: ${tokenState}`);
   }));
+  context.subscriptions.push(vscode.commands.registerCommand("lmAgent.installChatProfile", installChatProfile));
 }
 
 function validSavedFolder(folder) {

@@ -130,6 +130,15 @@ class ChatRequest(BaseModel):
     session: str = "api"
 
 
+class FolderIn(BaseModel):
+    path: str
+    active: bool = True
+
+
+class FolderPath(BaseModel):
+    path: str
+
+
 class Fact(BaseModel):
     fact: str
 
@@ -231,6 +240,8 @@ def create_app(
             "tools": registry.names(),
             "auto_approve": settings.auto_approve,
             "docs_dir": str(settings.docs_dir.resolve()),
+            "workspace_dir": str(hub.file_access.workspace),
+            "folders": hub.file_access.managed_folders,
             "knowledge": [
                 {"path": str(p), "files": len(docs_kit.all_documents(Path("/nonexistent"), [p]))}
                 for p in settings.knowledge if p.exists()
@@ -289,15 +300,65 @@ def create_app(
         hub.reset(session_id)
         return {"ok": True}
 
+    @app.get("/api/chats")
+    def chats():
+        return {"chats": hub.chats()}
+
+    @app.delete("/api/chats/{session_id}")
+    def delete_chat(session_id: str):
+        try:
+            if not hub.delete_chat(session_id):
+                raise HTTPException(404, "Чат не найден")
+        except Busy as e:
+            raise HTTPException(409, str(e)) from e
+        return {"ok": True}
+
+    @app.get("/api/folders")
+    def folders():
+        return {
+            "default": str(hub.file_access.default_workspace),
+            "active": str(hub.file_access.workspace),
+            "folders": hub.file_access.managed_folders,
+        }
+
+    @app.post("/api/folders")
+    def add_folder(req: FolderIn):
+        try:
+            return hub.add_folder(req.path, req.active)
+        except Busy as e:
+            raise HTTPException(409, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.put("/api/folders/active")
+    def set_active_folder(req: FolderPath):
+        try:
+            active = hub.set_active_folder(req.path)
+        except Busy as e:
+            raise HTTPException(409, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"active": str(active)}
+
+    @app.delete("/api/folders")
+    def remove_folder(req: FolderPath):
+        try:
+            if not hub.remove_folder(req.path):
+                raise HTTPException(404, "Папка не найдена в списке доступных")
+        except Busy as e:
+            raise HTTPException(409, str(e)) from e
+        return {"ok": True, "active": str(hub.file_access.workspace)}
+
     # --- файлы, созданные агентом (отчёты) ---
 
     @app.get("/api/files/{name:path}")
     def download(name: str):
-        root = settings.workspace.resolve()
-        target = (root / name).resolve()
-        if root not in target.parents or not target.is_file():
-            raise HTTPException(404, "Файл не найден")
-        return FileResponse(target, filename=target.name)
+        roots = [hub.file_access.workspace, *hub.file_access.project_folders]
+        for root in dict.fromkeys(roots):
+            target = (root / name).resolve()
+            if root in target.parents and target.is_file():
+                return FileResponse(target, filename=target.name)
+        raise HTTPException(404, "Файл не найден")
 
     # --- голосовой ввод ---
 
@@ -511,7 +572,7 @@ def create_app(
         async def run(text: str) -> None:
             await ws.send_json({"type": "busy", "value": True})
             try:
-                answer = await asyncio.to_thread(hub.ask, session_id, text, channel)
+                answer = await asyncio.to_thread(hub.ask, session_id, text, channel, persist=True)
                 payload = {"type": "answer", "text": answer}
             except Exception as e:  # noqa: BLE001
                 payload = {"type": "error", "text": error_text(e, settings)}

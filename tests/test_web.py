@@ -114,6 +114,58 @@ def test_ws_chat_with_approval(make):
         assert history[1]["arguments"] == {"command": "echo hi"}
 
 
+def test_web_chat_history_survives_server_restart(make):
+    client = make([answer("Первый ответ")])
+    with client.websocket_connect("/ws?session=persisted-chat") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "Сохрани этот разговор"})
+        assert receive_until(ws, "answer")[-1]["text"].strip() == "Первый ответ"
+
+    restarted = make([])
+    with restarted.websocket_connect("/ws?session=persisted-chat") as ws:
+        history = ws.receive_json()["messages"]
+    assert [message["role"] for message in history] == ["user", "assistant"]
+    assert history[0]["content"] == "Сохрани этот разговор"
+    chats = restarted.get("/api/chats").json()["chats"]
+    assert chats[0]["id"] == "persisted-chat"
+    assert chats[0]["title"] == "Сохрани этот разговор"
+
+    assert restarted.delete("/api/chats/persisted-chat").status_code == 200
+    assert restarted.get("/api/chats").json()["chats"] == []
+
+
+def test_workspace_folders_are_persistent_and_confirm_writes(make, tmp_path):
+    folder = tmp_path / "selected-project"
+    folder.mkdir()
+    client = make([])
+    added = client.post("/api/folders", json={"path": str(folder)})
+    assert added.status_code == 200 and added.json()["active"]
+    assert client.app.state.hub.settings.workspace == folder
+    assert client.app.state.hub.file_access.resolve("src/main.py") == folder / "src/main.py"
+    assert client.app.state.hub.registry._tools["write_file"].needs_confirm({"path": "src/main.py"})
+    assert client.app.state.hub.registry._tools["create_document"].needs_confirm({"name": "report"})
+    client.app.state.hub.registry.approver = lambda _name, _args: True
+    result = client.app.state.hub.registry.call(
+        "create_document", {"name": "проект", "content": "# Результат", "format": "md"},
+    )
+    assert "Файл готов: reports/проект.md" in result
+    assert (folder / "reports" / "проект.md").is_file()
+
+    restarted = make([])
+    assert restarted.get("/api/folders").json()["active"] == str(folder)
+    assert restarted.put("/api/folders/active", json={"path": str(folder)}).status_code == 200
+    removed = restarted.request("DELETE", "/api/folders", json={"path": str(folder)})
+    assert removed.status_code == 200
+    assert restarted.app.state.hub.settings.workspace == tmp_path / "ws"
+
+
+def test_workspace_folder_validation(make, tmp_path):
+    client = make([])
+    assert client.post("/api/folders", json={"path": "relative"}).status_code == 400
+    assert client.post("/api/folders", json={"path": str(tmp_path / "missing")}).status_code == 400
+    assert client.post("/api/folders", json={"path": tmp_path.anchor}).status_code == 400
+
+
 def test_ws_denied(make):
     client = make([tool_call("run_command", command="rm -rf /tmp/x"), answer("Ок, не буду")])
     with client.websocket_connect("/ws?session=s2") as ws:

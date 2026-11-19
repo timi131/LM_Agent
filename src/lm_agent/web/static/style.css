@@ -269,7 +269,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .drawer[hidden], .scrim[hidden] { display: none; }
 .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .25); z-index: 15; }
 .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-.tabs { display: flex; gap: 4px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tabs button[aria-selected="true"] { background: var(--surface-2); font-weight: 600; }
 .panel { padding: 14px 16px; overflow-y: auto; flex: 1; }
 .panel[hidden] { display: none; }
@@ -283,6 +283,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .list li .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .list li button { padding: 0 6px; color: var(--muted); }
 .list li button:hover { color: var(--bad); }
+.list li .chat-open { flex: 1; min-width: 0; padding: 0; text-align: left; }
+.list li .chat-open b { display: block; overflow-wrap: anywhere; }
+.list li .chat-open small { display: block; color: var(--muted); font-size: 11px; }
+.list li.current-chat { background: var(--tint-2); }
+.folder-active { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.folder-active input { width: auto; }
 .list .empty-item { color: var(--muted); border: none; }
 .dropzone {
   display: block; border: 1.5px dashed var(--border); border-radius: var(--radius);
@@ -295,6 +301,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @media (max-width: 600px) {
   .topbar { padding: 8px 10px; }
   .brand-name, .badge { display: none; }
+  .actions { max-width: calc(100vw - 56px); overflow-x: auto; scrollbar-width: none; }
   .actions .long { display: none; }
   .actions .short { display: inline; }
   .actions button { font-size: 12px; padding: 6px 5px; }
@@ -396,6 +403,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline-colo
 .task-form input, .task-form textarea {
   width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); resize: vertical;
 }
+.task-form .folder-active input { width: auto; padding: 0; }
 .when-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .preset { font-size: 12px; padding: 3px 9px; border: 1px solid var(--border); background: var(--surface); }
 .preset:hover { border-color: var(--accent); color: var(--accent); }

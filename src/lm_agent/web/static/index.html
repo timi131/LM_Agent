@@ -20,7 +20,9 @@
       <span class="status" id="status" title="Соединение с сервером"></span>
     </div>
     <nav class="actions">
-      <button class="ghost" id="btn-new" title="Очистить диалог (память сохранится)"><span class="long">Новый чат</span><span class="short" aria-label="Новый чат">＋</span></button>
+      <button class="ghost" id="btn-new" title="Создать чат; предыдущие разговоры сохраняются"><span class="long">Новый чат</span><span class="short" aria-label="Новый чат">＋</span></button>
+      <button class="ghost" id="btn-history" title="История разговоров">История</button>
+      <button class="ghost" id="btn-folders" title="Папки, доступные агенту">Папки</button>
       <button class="ghost" id="btn-browser" title="Показать, что агент делает в браузере">Браузер</button>
       <button class="ghost" id="btn-tasks" title="Задачи по расписанию">Задачи</button>
       <button class="ghost" id="btn-memory">Память</button>
@@ -88,13 +90,34 @@
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-head">
       <div class="tabs" role="tablist">
+        <button role="tab" data-tab="chats">Чаты</button>
         <button role="tab" data-tab="models">Модели</button>
         <button role="tab" data-tab="memory">Память</button>
         <button role="tab" data-tab="docs">Документы</button>
         <button role="tab" data-tab="tasks">Задачи</button>
+        <button role="tab" data-tab="folders">Папки</button>
       </div>
       <button class="ghost icon" id="drawer-close" title="Закрыть">✕</button>
     </div>
+
+    <section class="panel" data-panel="chats">
+      <p class="hint">Разговоры сохраняются на этом сервере. Нажмите на чат, чтобы продолжить его.</p>
+      <ul class="list" id="chat-list"></ul>
+      <p class="hint muted" id="chat-status"></p>
+    </section>
+    <section class="panel" data-panel="folders">
+      <p class="hint">Добавьте папку полным путём. Эти папки дополняют корни, разрешённые в настройках. Все добавленные папки доступны для чтения и записи; каждое изменение файла или создание отчёта попросит подтверждение.</p>
+      <form class="task-form" id="folder-form">
+        <input id="folder-path" placeholder="/Users/name/Projects/my-app" autocomplete="off" required>
+        <label class="folder-active"><input id="folder-active" type="checkbox" checked> Сделать текущей рабочей папкой</label>
+        <div class="row">
+          <button class="primary small">Добавить папку</button>
+          <span class="muted small" id="folder-status"></span>
+        </div>
+      </form>
+      <p class="hint" id="workspace-path"></p>
+      <ul class="list" id="folder-list"></ul>
+    </section>
 
     <section class="panel" data-panel="models">
       <p class="hint">Можно выбрать установленную модель Ollama или подключить внешний сервис с OpenAI-compatible API.</p>

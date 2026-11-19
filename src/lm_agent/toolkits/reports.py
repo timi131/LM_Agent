@@ -12,6 +12,7 @@ import csv
 import io
 import re
 from pathlib import Path
+from typing import Callable
 
 from ..tools import ToolRegistry
 
@@ -240,8 +241,17 @@ def write_xlsx(path: Path, columns: list[str], rows: list[list], sheet: str = "�
 
 # --- инструменты ---
 
-def register(registry: ToolRegistry, workspace: Path, tables=None) -> None:
-    @registry.register
+def register(
+    registry: ToolRegistry, workspace: Path, tables=None,
+    workspace_provider: Callable[[], Path] | None = None,
+    confirm_output: Callable[[], bool] | None = None,
+) -> None:
+    def output_root() -> Path:
+        return workspace_provider() if workspace_provider else workspace
+
+    confirm = (lambda _args: confirm_output()) if confirm_output else False
+
+    @registry.register(confirm=confirm)
     def create_document(name: str, content: str, format: str = "docx", title: str = "") -> str:
         """Создаёт файл-отчёт: Word (docx), PDF или Excel (xlsx) из текста в Markdown (заголовки #, списки, таблицы |, **жирный**).
 
@@ -255,21 +265,23 @@ def register(registry: ToolRegistry, workspace: Path, tables=None) -> None:
             rows = parse_rows("\n".join(l for l in content.splitlines() if l.strip().startswith("|")) or content)
             if len(rows) < 2:
                 return "Ошибка: для Excel нужна таблица с заголовком (Markdown | или CSV). Для точных данных из таблицы используй export_query"
-            path = _out(workspace, name, "xlsx")
+            root = output_root()
+            path = _out(root, name, "xlsx")
             write_xlsx(path, rows[0], [[_value(c) for c in r] for r in rows[1:]])
-            return _ready(path, workspace) + f", строк: {len(rows) - 1}"
+            return _ready(path, root) + f", строк: {len(rows) - 1}"
         if fmt not in ("docx", "pdf", "md"):
             return "Ошибка: format должен быть docx, pdf, xlsx или md"
-        path = _out(workspace, name, fmt)
+        root = output_root()
+        path = _out(root, name, fmt)
         if fmt == "docx":
             markdown_to_docx(content, path, title)
         elif fmt == "pdf":
             html_to_pdf(markdown_to_html(content, title), path)
         else:
             path.write_text((f"# {title}\n\n" if title else "") + content, encoding="utf-8")
-        return _ready(path, workspace)
+        return _ready(path, root)
 
-    @registry.register
+    @registry.register(confirm=confirm)
     def create_spreadsheet(name: str, data: str, sheet: str = "Данные") -> str:
         """Создаёт таблицу Excel (xlsx) из данных: CSV (первая строка — заголовки) или таблица Markdown.
 
@@ -280,16 +292,17 @@ def register(registry: ToolRegistry, workspace: Path, tables=None) -> None:
         rows = parse_rows(data)
         if not rows:
             return "Ошибка: нет данных для таблицы"
-        path = _out(workspace, name, "xlsx")
+        root = output_root()
+        path = _out(root, name, "xlsx")
         write_xlsx(path, rows[0], [[_value(c) for c in r] for r in rows[1:]], sheet)
-        return _ready(path, workspace) + f", строк: {len(rows) - 1}"
+        return _ready(path, root) + f", строк: {len(rows) - 1}"
 
     if tables is None:
         return
 
     from .tables import normalize_sql
 
-    @registry.register
+    @registry.register(confirm=confirm)
     def export_query(file: str, sql: str, name: str) -> str:
         """Excel прямо из данных: выгружает результат SQL по таблице пользователя в xlsx — все строки, точные числа. Лучший способ «выгрузить в Excel».
 
@@ -305,7 +318,8 @@ def register(registry: ToolRegistry, workspace: Path, tables=None) -> None:
             cur = con.execute(sql_fixed)
             columns = [d[0] for d in cur.description or []]
             rows = cur.fetchmany(MAX_EXPORT_ROWS)
-        out = _out(workspace, name, "xlsx")
+        root = output_root()
+        out = _out(root, name, "xlsx")
         write_xlsx(out, columns, rows)
         note = f"; значения исправлены по данным: {', '.join(fixed)}" if fixed else ""
-        return _ready(out, workspace) + f", строк: {len(rows)}{note}"
+        return _ready(out, root) + f", строк: {len(rows)}{note}"

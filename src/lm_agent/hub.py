@@ -18,10 +18,12 @@ import ollama
 import httpx
 
 from .agent import Agent, ToolEvent
+from .chat_store import ChatStore
 from .config import Settings
 from .models import ExternalModelStore, OpenAICompatibleClient
 from .speech import make_transcriber
 from .toolkits import ALL, build_registry, make_browser, make_context
+from .toolkits.files import FileAccess
 
 
 class ChannelLike(Protocol):
@@ -96,13 +98,20 @@ class Hub:
         self.client = self.local_client
         self.model_store = ExternalModelStore(settings.data_dir / "external_models.json")
         self.active_external: dict | None = None
+        self.file_access = FileAccess(
+            settings.workspace, settings.file_roots, settings.data_dir / "workspace_folders.json",
+        )
+        settings.workspace = self.file_access.workspace
         self.browser = make_browser(settings) if "browser" in toolkits else None
         self.registry, self.memory = build_registry(
-            settings, self.local_client, self._approve, toolkits, browser_instance=self.browser,
+            settings, self.local_client, self._approve, toolkits,
+            browser_instance=self.browser, file_access=self.file_access,
         )
+        self.table_store = self.registry.table_store
         # распознавание речи — одно на веб-чат и Telegram (модель в памяти одна)
         self.transcriber = make_transcriber(settings)
         self.log = EventLog(settings.data_dir / "logs" / "agent.log")
+        self.chat_store = ChatStore(settings.data_dir / "chats.sqlite3")
         self.sessions: dict[str, Agent] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
@@ -216,29 +225,40 @@ class Hub:
 
     # --- сессии ---
 
+    def _agent_unlocked(self, session_id: str) -> Agent:
+        if session_id not in self.sessions:
+            agent = Agent(
+                client=self.client, tools=self.registry, settings=self.settings,
+                on_tool=self._on_tool, on_token=self._on_token,
+                context=make_context(self.settings, self.memory, self.toolkits, self.file_access),
+                log=lambda event, data, sid=session_id: self.log.write(sid, event, data),
+                retriever=self.registry.retriever,
+            )
+            history = self.chat_store.load(session_id)
+            if history:
+                agent.messages = [agent.messages[0], *history]
+            self.sessions[session_id] = agent
+            self._locks[session_id] = threading.Lock()
+        return self.sessions[session_id]
+
     def agent(self, session_id: str) -> Agent:
         with self._guard:
-            if session_id not in self.sessions:
-                self.sessions[session_id] = Agent(
-                    client=self.client, tools=self.registry, settings=self.settings,
-                    on_tool=self._on_tool, on_token=self._on_token,
-                    context=make_context(self.settings, self.memory, self.toolkits),
-                    log=lambda event, data, sid=session_id: self.log.write(sid, event, data),
-                    retriever=self.registry.retriever,
-                )
-                self._locks[session_id] = threading.Lock()
-            return self.sessions[session_id]
+            return self._agent_unlocked(session_id)
 
     def busy(self, session_id: str) -> bool:
         lock = self._locks.get(session_id)
         return bool(lock and lock.locked())
 
-    def ask(self, session_id: str, text: str, channel: ChannelLike | None = None, fresh: bool = False) -> str:
+    def ask(
+        self, session_id: str, text: str, channel: ChannelLike | None = None,
+        fresh: bool = False, persist: bool = False,
+    ) -> str:
         """Синхронный запрос к агенту. fresh=True — начать сессию с чистого листа (для расписания)."""
-        agent = self.agent(session_id)
-        lock = self._locks[session_id]
-        if not lock.acquire(blocking=False):
-            raise Busy("Агент ещё отвечает в этой сессии — дождитесь ответа")
+        with self._guard:
+            agent = self._agent_unlocked(session_id)
+            lock = self._locks[session_id]
+            if not lock.acquire(blocking=False):
+                raise Busy("Агент ещё отвечает в этой сессии — дождитесь ответа")
         token = current_channel.set(channel)
         try:
             if fresh:
@@ -248,8 +268,63 @@ class Hub:
             self.log.write(session_id, "error", {"error": f"{type(e).__name__}: {e}"})
             raise
         finally:
-            current_channel.reset(token)
-            lock.release()
+            try:
+                if persist:
+                    self.chat_store.save(session_id, agent.messages)
+            finally:
+                current_channel.reset(token)
+                lock.release()
+
+    def chats(self) -> list[dict]:
+        return self.chat_store.list()
+
+    def delete_chat(self, session_id: str) -> bool:
+        with self._guard:
+            lock = self._locks.get(session_id)
+            if lock and not lock.acquire(blocking=False):
+                raise Busy("Нельзя удалить чат, пока агент отвечает")
+            try:
+                self.sessions.pop(session_id, None)
+                self._locks.pop(session_id, None)
+                return self.chat_store.delete(session_id)
+            finally:
+                if lock:
+                    lock.release()
+
+    def add_folder(self, path: str, active: bool = True) -> dict:
+        with self._guard:
+            self._ensure_idle_unlocked()
+            result = self.file_access.add_folder(path, active)
+            self._refresh_workspace_unlocked()
+            return result
+
+    def set_active_folder(self, path: str) -> Path:
+        with self._guard:
+            self._ensure_idle_unlocked()
+            active = self.file_access.set_active_folder(path)
+            self._refresh_workspace_unlocked()
+            return active
+
+    def remove_folder(self, path: str) -> bool:
+        with self._guard:
+            self._ensure_idle_unlocked()
+            removed = self.file_access.remove_folder(path)
+            if removed:
+                self._refresh_workspace_unlocked()
+            return removed
+
+    def _ensure_idle_unlocked(self) -> None:
+        if any(lock.locked() for lock in self._locks.values()):
+            raise Busy("Нельзя менять папки, пока агент отвечает")
+
+    def _refresh_workspace_unlocked(self) -> None:
+        self.settings.workspace = self.file_access.workspace
+        if self.table_store is not None:
+            self.table_store.folders = list(
+                dict.fromkeys([self.settings.docs_dir, *self.file_access.project_folders])
+            )
+        for agent in self.sessions.values():
+            agent.refresh_context()
 
     def stop(self, session_id: str) -> bool:
         """Просит остановить текущий ответ. Уже идущий инструмент (например, команда shell) доработает."""

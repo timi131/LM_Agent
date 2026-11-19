@@ -341,6 +341,7 @@ els.stop.addEventListener("click", () => {
 // --- соединение ---
 let ws = null;
 let retry = 0;
+let reconnectTimer = null;
 const outbox = [];
 
 function send(payload) {
@@ -352,21 +353,52 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const q = new URLSearchParams({ session: sessionId });
   if (token) q.set("token", token);
-  ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
-  ws.onopen = () => {
+  const socket = new WebSocket(`${proto}://${location.host}/ws?${q}`);
+  ws = socket;
+  socket.onopen = () => {
+    if (ws !== socket) return;
     retry = 0;
     els.status.className = "status online";
     els.status.title = "Подключено";
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
   };
-  ws.onclose = (e) => {
+  socket.onclose = (e) => {
+    if (ws !== socket) return;
     if (e.code === 1008) { showGate(); return; }  // сервер отклонил: нет или неверный токен
     els.status.className = "status offline";
     els.status.title = "Нет соединения — переподключаюсь…";
     setBusy(false);
-    setTimeout(connect, Math.min(1000 * 2 ** retry++, 15000));
+    reconnectTimer = setTimeout(connect, Math.min(1000 * 2 ** retry++, 15000));
   };
-  ws.onmessage = (e) => handle(JSON.parse(e.data));
+  socket.onmessage = (e) => { if (ws === socket) handle(JSON.parse(e.data)); };
+}
+
+function switchChat(id) {
+  if (busy || !id || id === sessionId) return;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  const previous = ws;
+  ws = null;
+  if (previous) {
+    previous.onclose = null;
+    previous.onmessage = null;
+    previous.close();
+  }
+  outbox.length = 0;
+  sessionId = id;
+  store.set("lm-agent-session", sessionId);
+  streaming = null;
+  lastQuestion = "";
+  els.messages.replaceChildren();
+  updateEmpty();
+  setBusy(false);
+  closeDrawer();
+  connect();
+}
+
+function startNewChat() {
+  if (busy) return;
+  switchChat(newId());
 }
 
 function handle(ev) {
@@ -385,6 +417,7 @@ function handle(ev) {
       }
       updateEmpty();
       setBusy(!!ev.busy);
+      loadChats();
       break;
     case "busy":
       setBusy(ev.value);
@@ -408,10 +441,12 @@ function handle(ev) {
     }
     case "answer":
       finishAnswer(ev.text);
+      loadChats();
       break;
     case "error":
       streaming = null;
       addMessage("error", ev.text);
+      loadChats();
       break;
   }
 }
@@ -499,11 +534,7 @@ els.input.addEventListener("keydown", (e) => {
 });
 document.querySelectorAll(".suggestions .chip").forEach((b) => b.addEventListener("click", () => submit(b.textContent)));
 
-$("#btn-new").addEventListener("click", () => {
-  if (busy) return;
-  send({ type: "reset" });
-  els.input.focus();
-});
+$("#btn-new").addEventListener("click", startNewChat);
 
 // --- голосовой ввод: запись в браузере → локальный Whisper на сервере → текст в поле ---
 const mic = { btn: $("#mic"), time: $("#mic .mic-time"), rec: null, chunks: [], started: 0, timer: 0, cancelled: false };
@@ -607,7 +638,9 @@ function openDrawer(tab) {
   els.scrim.hidden = false;
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   document.querySelectorAll(".panel").forEach((p) => { p.hidden = p.dataset.panel !== tab; });
-  if (tab === "memory") loadMemory();
+  if (tab === "chats") loadChats();
+  else if (tab === "folders") loadFolders();
+  else if (tab === "memory") loadMemory();
   else if (tab === "tasks") loadTasks();
   else if (tab === "models") loadModels();
   else loadDocs();
@@ -619,11 +652,141 @@ function closeDrawer() {
 $("#btn-memory").addEventListener("click", () => openDrawer("memory"));
 $("#btn-docs").addEventListener("click", () => openDrawer("docs"));
 $("#btn-tasks").addEventListener("click", () => openDrawer("tasks"));
+$("#btn-history").addEventListener("click", () => openDrawer("chats"));
+$("#btn-folders").addEventListener("click", () => openDrawer("folders"));
 $("#drawer-close").addEventListener("click", closeDrawer);
 els.scrim.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !els.drawer.hidden) closeDrawer(); });
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => openDrawer(b.dataset.tab)));
 $("#model-add").addEventListener("click", () => openDrawer("models"));
+
+async function loadChats() {
+  const list = $("#chat-list");
+  if (!list) return;
+  try {
+    const data = await api("/api/chats");
+    const items = data.chats.map((chat) => {
+      const li = document.createElement("li");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "chat-open";
+      open.disabled = busy;
+      const title = document.createElement("b");
+      title.textContent = chat.title || "Новый чат";
+      const updated = document.createElement("small");
+      updated.textContent = new Date(chat.updated_at).toLocaleString();
+      open.append(title, updated);
+      open.onclick = () => switchChat(chat.id);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chat-delete";
+      remove.textContent = "✕";
+      remove.title = "Удалить чат";
+      remove.disabled = busy;
+      remove.onclick = async () => {
+        if (!window.confirm(`Удалить чат «${chat.title}»?`)) return;
+        if (chat.id === sessionId) switchChat(newId());
+        try {
+          await api(`/api/chats/${encodeURIComponent(chat.id)}`, { method: "DELETE" });
+          await loadChats();
+        } catch (error) {
+          $("#chat-status").textContent = error.message;
+        }
+      };
+      li.append(open, remove);
+      if (chat.id === sessionId) li.classList.add("current-chat");
+      return li;
+    });
+    if (!items.length) {
+      const empty = document.createElement("li");
+      empty.className = "empty-item";
+      empty.textContent = "Сохранённых чатов пока нет.";
+      items.push(empty);
+    }
+    list.replaceChildren(...items);
+    $("#chat-status").textContent = "";
+  } catch (error) {
+    $("#chat-status").textContent = error.message;
+  }
+}
+
+async function loadFolders() {
+  const list = $("#folder-list");
+  const status = $("#folder-status");
+  try {
+    const data = await api("/api/folders");
+    $("#workspace-path").textContent = `Рабочая папка: ${data.active}`;
+    const items = data.folders.map((folder) => {
+      const li = document.createElement("li");
+      const text = document.createElement("span");
+      text.className = "text";
+      text.textContent = folder.path;
+      li.append(text);
+      if (folder.active) {
+        const active = document.createElement("span");
+        active.className = "meta";
+        active.textContent = "Рабочая";
+        li.append(active);
+      } else {
+        const select = document.createElement("button");
+        select.type = "button";
+        select.textContent = "Сделать рабочей";
+        select.onclick = async () => {
+          status.textContent = "Переключаю…";
+          try {
+            await api("/api/folders/active", { method: "PUT", json: { path: folder.path } });
+            await loadFolders();
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        };
+        li.append(select);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "✕";
+      remove.title = "Убрать папку из доступных";
+      remove.onclick = async () => {
+        if (!window.confirm(`Убрать папку из доступных агенту?\n${folder.path}`)) return;
+        try {
+          await api("/api/folders", { method: "DELETE", json: { path: folder.path } });
+          await loadFolders();
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      };
+      li.append(remove);
+      return li;
+    });
+    list.replaceChildren(...items);
+    if (!items.length) {
+      const empty = document.createElement("li");
+      empty.className = "empty-item";
+      empty.textContent = "Добавленных папок пока нет.";
+      list.append(empty);
+    }
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+$("#folder-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const path = $("#folder-path").value.trim();
+  const status = $("#folder-status");
+  status.textContent = "Добавляю…";
+  try {
+    const result = await api("/api/folders", {
+      method: "POST",
+      json: { path, active: $("#folder-active").checked },
+    });
+    status.textContent = result.active ? "Папка добавлена и выбрана рабочей." : "Папка добавлена.";
+    $("#folder-path").value = "";
+    await loadFolders();
+  } catch (error) {
+    status.textContent = error.message;
+  }
+});
 
 async function loadModels() {
   try {
@@ -1059,6 +1222,7 @@ $("#btn-browser").addEventListener("click", () => {
 api("/api/info")
   .then((info) => {
     loadModels();
+    loadChats();
     $("#docs-dir").textContent = info.docs_dir;
     if (info.knowledge && info.knowledge.length) {
       const note = $("#kb-note");
