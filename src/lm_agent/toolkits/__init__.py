@@ -6,9 +6,9 @@ from typing import Any
 
 from ..config import Settings
 from ..tools import Approver, ToolRegistry
-from . import basic, browser, docs, files, mail, memory, reports, services, shell, tables, web
+from . import basic, browser, docs, files, mail, memory, reports, services, shell, tables, vscode, web
 
-ALL = ("basic", "files", "web", "browser", "shell", "services", "mail", "docs", "tables", "reports", "memory")
+ALL = ("basic", "files", "web", "browser", "shell", "services", "mail", "docs", "tables", "reports", "memory", "vscode")
 
 
 def make_browser(settings: Settings) -> browser.Browser:
@@ -37,6 +37,8 @@ def build_registry(
         browser.register(registry, b, settings.browser_confirm)
     if "shell" in enabled:
         shell.register(registry, fa or files.FileAccess(settings.workspace, settings.file_roots), settings.command_timeout)
+    if "vscode" in enabled:
+        vscode.register(registry, settings.vscode_url, settings.vscode_token_file or settings.data_dir / "vscode_token")
     if "services" in enabled:
         services.register(registry, settings.services_file)
     if "mail" in enabled:

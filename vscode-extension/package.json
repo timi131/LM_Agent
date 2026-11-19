@@ -1,0 +1,42 @@
+{
+  "name": "lm-agent-vscode",
+  "displayName": "LM Agent",
+  "description": "Local VS Code bridge for LM Agent",
+  "version": "0.1.0",
+  "publisher": "lm-agent",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "LM Agent",
+      "properties": {
+        "lmAgent.bridgePort": {
+          "type": "number",
+          "default": 8765,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port for the local LM Agent bridge."
+        },
+        "lmAgent.tokenFile": {
+          "type": "string",
+          "default": "~/.lm_agent/vscode_token",
+          "description": "Path to the shared local bridge token file."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "lmAgent.showBridgeStatus",
+        "title": "LM Agent: Show Bridge Status"
+      }
+    ]
+  }
+}

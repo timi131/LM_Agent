@@ -157,7 +157,33 @@ curl -s localhost:8000/api/chat -H 'Content-Type: application/json' \
 | `tables` | `list_tables`, `table_info`, `table_query` (SQL по CSV/Excel) | — |
 | `reports` | `create_document` (Word, PDF, Excel), `create_spreadsheet`, `export_query` | — |
 | `memory` | `remember`, `list_memories`, `forget` | — |
+| `vscode` | выбор папок проекта/анализа, список и чтение файлов, открытие, создание и изменение файлов, Problems, терминал | создание/изменение файла и команда терминала |
 | (всегда в веб-чате и боте) | `schedule_task`, `list_scheduled`, `delete_scheduled` | постановка и удаление задач |
+
+### Работа в VS Code
+
+Локальное расширение [vscode-extension/](./vscode-extension) связывает редактор с агентом через HTTP-мост,
+доступный только на `127.0.0.1`. Откройте корень проекта в VS Code и запустите расширение командой:
+
+```bash
+code --extensionDevelopmentPath="$(pwd)/vscode-extension" "$(pwd)"
+```
+
+Это откроет окно Extension Development Host с проектом и активным мостом. Запустите `lm-agent-web` или `lm-agent`
+в том же пользовательском окружении. При запуске Python-агент создаёт ключ в `~/.lm_agent/vscode_token`
+(права только владельцу); расширение читает его при каждом запросе. Если `LM_AGENT_DATA` изменён, укажите такой же
+путь к ключу в настройке VS Code `lmAgent.tokenFile` либо задайте `LM_AGENT_VSCODE_TOKEN_FILE` агенту.
+Адрес моста настраивается через `LM_AGENT_VSCODE_URL` и `lmAgent.bridgePort` (порт должен совпадать).
+
+Попросите агента, например: «Выбери папку проекта и создай в ней приложение» или «Выбери папку с документами,
+найди и проанализируй файлы». VS Code откроет диалог выбора; выбранные папки запоминаются расширением между
+перезапусками. Папка проекта используется для открытия, создания, изменения файлов и как рабочая директория
+терминала LM Agent. Папка анализа отдельная и доступна только для списка и чтения файлов.
+
+Агент также может прочитать активный документ (включая несохранённый текст и выделение) и список Problems.
+Создание нового файла, замена существующего файла и отправка команды в терминал требуют подтверждения. Терминальный
+инструмент только отправляет команду — вывод и статус выполнения он не считывает. Пути ограничены выбранной папкой;
+символические ссылки запрещены. Расширение можно отключить в `LM_AGENT_TOOLKITS`, убрав `vscode`.
 
 ### Подтверждения
 
@@ -262,6 +288,8 @@ LM_AGENT_KNOWLEDGE=~/Desktop/ddd/knowledge/faq.md:~/Desktop/ddd/knowledge/nashi-
 | `LM_AGENT_DATA` | `~/.lm_agent` | память и индекс |
 | `LM_AGENT_SERVICES` | `./services.json` | описание внешних сервисов |
 | `LM_AGENT_TOOLKITS` | все | включённые наборы инструментов |
+| `LM_AGENT_VSCODE_URL` | `http://127.0.0.1:8765` | адрес локального моста расширения VS Code |
+| `LM_AGENT_VSCODE_TOKEN_FILE` | `~/.lm_agent/vscode_token` | путь к общему ключу моста VS Code |
 | `LM_AGENT_AUTO_APPROVE` | `0` | не спрашивать подтверждений |
 | `LM_AGENT_MAX_STEPS` | `15` | лимит шагов «модель → инструмент» на один запрос |
 | `LM_AGENT_NUM_CTX` | `16384` | окно контекста модели в токенах |
@@ -333,7 +361,8 @@ src/lm_agent/
   telegram.py         Telegram-бот
   web/server.py       веб-сервер: WebSocket-чат и HTTP API
   web/static/         страница чата (HTML/CSS/JS, без сборки)
-  toolkits/           basic, files, web, browser, shell, services, mail, docs, tables, reports, memory
+  toolkits/           basic, files, web, browser, shell, services, mail, docs, tables, reports, memory, vscode
+vscode-extension/     локальное расширение-мост для VS Code
 tests/                тесты (без реальной модели и сети)
 ```
 

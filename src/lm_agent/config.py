@@ -11,6 +11,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "не переходи на китайский или английский. "
     "Если для ответа нужны точные данные (время, вычисления, файлы, интернет, документы), "
     "вызывай доступные инструменты, а не выдумывай результат. "
+    "Если пользователь просит работать в VS Code, используй vscode_context и vscode_problems для контекста редактора "
+    "и ошибок. Если нужна папка проекта или источник для анализа — сначала вызови соответствующий vscode_select_* "
+    "и дождись выбора пользователя; для файлов используй vscode_list_files и vscode_read_file, scope=analysis только для чтения. "
+    "Новые файлы проекта создавай через vscode_create_file, существующие меняй через vscode_edit_file — оба действия "
+    "требуют подтверждения. "
     "Никогда не утверждай, что действие выполнено (например, файл записан), "
     "если ты не вызвал соответствующий инструмент. В аргументы инструментов "
     "подставляй уже полученные значения целиком. "
@@ -62,6 +67,8 @@ class Settings:
     # Служебные данные: память, индекс документов.
     data_dir: Path = field(default_factory=lambda: Path("~/.lm_agent").expanduser())
     services_file: Path = Path("./services.json")
+    vscode_url: str = "http://127.0.0.1:8765"
+    vscode_token_file: Path | None = None
     max_steps: int = 15
     temperature: float = 0.2
     # Окно контекста модели. Стандартного окна Ollama не хватает на схемы инструментов + страницу.
@@ -100,6 +107,11 @@ class Settings:
             saved_knowledge=saved,
             data_dir=Path(env("LM_AGENT_DATA", str(d.data_dir))).expanduser(),
             services_file=Path(env("LM_AGENT_SERVICES", str(d.services_file))).expanduser(),
+            vscode_url=env("LM_AGENT_VSCODE_URL", d.vscode_url),
+            vscode_token_file=(
+                Path(env("LM_AGENT_VSCODE_TOKEN_FILE", "")).expanduser()
+                if env("LM_AGENT_VSCODE_TOKEN_FILE", "").strip() else None
+            ),
             max_steps=int(env("LM_AGENT_MAX_STEPS", d.max_steps)),
             temperature=float(env("LM_AGENT_TEMPERATURE", d.temperature)),
             num_ctx=int(env("LM_AGENT_NUM_CTX", d.num_ctx)),
